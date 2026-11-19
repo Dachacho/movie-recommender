@@ -44,17 +44,18 @@ Operating contract for coding agents on this project. Product requirements live 
 - Validate guest input server-side: finite 384-d vectors, bounded ID arrays, upload size, CSV shape. Parameterize all SQL. Return structured errors and explicit empty results.
 - Guest data stays in IndexedDB. The only guest data sent to the API is the ratings payload for stateless taste computation (see §7); it is not logged or persisted.
 - Never log personal ratings, imports or other guest data. Secrets come from env and are never committed.
+- Code must pass the configured ESLint and Prettier rules. Fix the cause of a violation; never add `eslint-disable`/`@ts-ignore` or weaken the config to silence a check without approval.
 - Do not invent match percentages or explanatory facts. Recommendation output must contain only real catalog movies.
 
 ### Test
 
 - Add focused tests for every changed behaviour, including failure cases: invalid input, empty pool, filter violations, cooldown boundaries, zero-norm taste.
 - Unit-test pure math and selection logic against small committed fixtures; no network in unit tests. Use integration tests for API routes and DB access.
-- Run the narrowest relevant test command plus typecheck. Report the exact command and actual result. Never claim a test passes without running it; if a check cannot run, say why.
+- Run `npm run lint`, `npm run format:check`, the relevant tests and the typecheck. Report each exact command and actual result. Never claim a check passes without running it; if one cannot run, say why.
 
 ### Review
 
-- Re-read your full diff before reporting. Check for: unrelated edits, invented columns or IDs, unvalidated input, unsafe SQL, guest data leaks, stack drift, stale docs.
+- Re-read your full diff before reporting. Check for: unrelated edits, invented columns or IDs, unvalidated input, unsafe SQL, guest data leaks, lint suppressions, stack drift, stale docs.
 - Verify each acceptance criterion for the item, not just that the code runs.
 - Update BACKLOG.md status only after the definition of done is met. Change ARCHITECTURE.md only for an approved decision, and call it out in the report.
 
@@ -72,7 +73,8 @@ Installed skills live in `.agents/skills/` and must be loaded automatically when
 
 - Requested behaviour works and failure paths are handled.
 - Tests cover new and changed behaviour, including failures.
-- Typecheck and relevant tests pass (or failures are reported with output).
+- Lint, format check, typecheck and relevant tests pass (or failures are reported with output).
+- No lint rule disabled, suppression comment added or configuration weakened without approval.
 - No unapproved dependency, schema, API or architecture change.
 - No unrelated diff, no secrets, no guest data in logs.
 - Backlog status and any approved documentation update are done.
