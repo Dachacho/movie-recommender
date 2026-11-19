@@ -33,7 +33,7 @@ Operating contract for coding agents on this project. Product requirements live 
 
 ### Plan
 
-- For non-trivial work, state before coding: approach, files to add or change, tests, material tradeoffs, and what is explicitly out of scope. Wait for approval when a stop-and-ask trigger applies.
+- For non-trivial work, state before coding: approach, files to add or change, tests, material tradeoffs, and what is explicitly out of scope. Wait for approval when a stop-and-ask trigger applies. For multi-step work, list the intended commit series.
 - For small, unambiguous changes, state the plan and implement in the same turn.
 - Keep ranking math pure and deterministic: pure functions, explicit inputs, no I/O or hidden state.
 
@@ -76,7 +76,7 @@ Installed skills live in `.agents/skills/` and must be loaded automatically when
 - No unapproved dependency, schema, API or architecture change.
 - No unrelated diff, no secrets, no guest data in logs.
 - Backlog status and any approved documentation update are done.
-- Intended files staged with a proposed commit message; nothing committed or pushed.
+- Next logical commit staged with a proposed message (later units left unstaged); nothing committed or pushed.
 - Final report delivered in the format below.
 
 ## 5. Final report format
@@ -96,7 +96,8 @@ Use these headings, kept brief:
 - **Branching:** commit directly to `main`. No feature branches, no pull requests, no merge commits. For a genuinely risky change (e.g. a destructive migration), use a throwaway local branch and delete it afterwards; never leave stale branches.
 - **Your role:** stage, never commit. The user reviews and commits. If the user explicitly asks you to commit in that session, follow the rules below, then report the hash.
 - **Staging:** `git add` explicit paths only; never `git add -A`, `git add .` or `git commit -a`. Stage only files belonging to the change. Never stage unrelated user work, generated files, `.env` files or secrets.
-- **Unit:** one logical change per commit — one backlog item or a coherent slice, with its tests and directly related docs. Split unrelated work. Keep refactors and formatting in separate commits. No WIP commits on `main`: every staged state must typecheck and pass relevant tests.
+- **Unit:** the smallest coherent, independently revertable step. Never commit a whole backlog item at once; split it into a short series (for example workspace config → shared types → module with its tests → wiring). Each commit must leave the repo typechecking and passing relevant tests, even if the feature is not yet reachable. If a commit spans unrelated areas or would not revert cleanly, split it. Keep refactors and formatting separate. No WIP commits on `main`.
+- **Staging order:** when work spans several commits, stage only the first unit and leave later units unstaged until the previous commit exists. Report the planned commit series so nothing is lost.
 - **Message format:**
   ```
   feat: add pure taste-vector calculation
