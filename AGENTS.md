@@ -58,6 +58,16 @@ Operating contract for coding agents on this project. Product requirements live 
 - Verify each acceptance criterion for the item, not just that the code runs.
 - Update BACKLOG.md status only after the definition of done is met. Change ARCHITECTURE.md only for an approved decision, and call it out in the report.
 
+### Skills
+
+Installed skills live in `.agents/skills/` and must be loaded automatically when their trigger applies; the user should not have to name a skill. Before non-trivial or unfamiliar work, check installed skills and the wider skills ecosystem. Precedence: PRODUCT.md, ARCHITECTURE.md, this file and the approval gates in §2 override any skill. A skill never justifies a new dependency, schema change or scope expansion.
+
+- **test-driven-development** — required for complex logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Write one failing test, run it and confirm it fails for the expected reason, then write the minimal implementation. For ordinary application and UI code, implement first and add tests afterward. Do not write tests for trivial code.
+- **systematic-debugging** — use for every bug, failing test or unexpected result before proposing a fix. Reproduce, trace the data to the root cause, test one hypothesis at a time, then fix and verify. No symptom patches. After three failed fixes, stop and raise the architectural question instead of trying a fourth.
+- **verification-before-completion** — before any claim that work is done or passing, and before the final report: run the exact command, read the full output and state only what it proves. Previous runs and "should pass" are not evidence.
+- **frontend-design** — use when building or reshaping the recommendation screen, dashboard or other user-facing UI. Produce a short design plan (palette, type, layout, principles) before writing code, then stay within the approved plain-CSS stack and accessibility requirements.
+- **find-skills** — use proactively when a task is large, unfamiliar or likely to recur, and before building custom tooling or infrastructure. Search `npx skills find` or skills.sh, prefer maintained sources, and report the best candidate and why it fits. Do not search for small, routine or already well-understood work; do not skip the search on a large unfamiliar task just because you could implement it yourself. If nothing relevant exists, proceed with the approved stack and say so. Installing requires approval and is always project-local: run `npx skills add <package> -y` after approval, never with `-g` or any global install. Never adopt a skill that conflicts with the approved stack or adds a service.
+
 ## 4. Definition of done
 
 - Requested behaviour works and failure paths are handled.
