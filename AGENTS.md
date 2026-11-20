@@ -119,3 +119,41 @@ Use these headings, kept brief:
 - Whether the server trusts client-supplied guest taste vectors or recomputes from ratings, and the limits on that input.
 - Cold-start selection, exploration strength and taste/prompt weights: start from ARCHITECTURE.md, tune only against held-out evaluation results, and document the chosen values.
 - Account history persistence and migration details: deferred until accounts are implemented.
+
+<!-- review-workflow:start -->
+## Review workflow
+These rules add to the project rules above. Where they conflict, the rules above win.
+
+Commands:
+- Build: `npm run build` (web only; API and shared have no build step)
+- Typecheck: `npm run typecheck`
+- Lint: `npm run lint`
+- Format check: `npm run format:check`
+- Test: `npm test` (all workspaces); `npm test -w @movie-recommender/api` or `-w @movie-recommender/web` for one
+
+Flow:
+- Every non-trivial task goes plan, then implement, then review. Plan first, and wait for my approval before implementing.
+- Split plans into small steps, each with one clear acceptance criterion and a list of the files it will touch.
+- The main agent delegates implementation to the implementer subagent and does not write large changes inline.
+- If the build agent writes code inline, review it with reviewer-strict, because the regular reviewer uses the same model.
+- After each step, run the reviewer. For risky changes (schema or migration changes, API route or shape changes, auth or guest data persistence (IndexedDB), new dependencies, security, and deletions), also run reviewer-strict.
+- Skip review for trivial steps (under about 20 lines, no logic change: renames, copy, formatting), but still run the checks.
+- The self-check (re-read your own full diff) always runs, even when the independent review is skipped.
+- Code is never reviewed by the model that wrote it.
+- Reviewers get only the plan step, the diff, and the raw check output, never the full implementer session.
+- Use the reviewer agents defined here for step review; the general-purpose template in the requesting-code-review skill is not used for this flow.
+- Existing git rules still apply: no commits or pushes; stage only after review passes.
+
+Definition of done:
+- A step is done only when the build/typecheck/lint/format check/tests pass and the raw output is shown.
+- A claim without output counts as not run.
+- Reviewer findings without file:line are ignored.
+- Fix every BLOCKER and review again.
+- Stop and ask me when either limit is hit first: 3 failed fixes (existing rule) or 2 review rounds with open BLOCKERs.
+- Skipped tests are not passed. If DB tests were skipped because DATABASE_URL isn't set, say so explicitly, and the reviewer must flag it when the step touches DB code.
+
+Discipline:
+- Reviewers never edit files.
+- Stay in scope. Do not refactor, rename, or "improve" things the step didn't ask for.
+- Keep sessions short. Compact or start a fresh subagent before the context gets to about 250K tokens.
+<!-- review-workflow:end -->
