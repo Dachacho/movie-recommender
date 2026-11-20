@@ -33,7 +33,7 @@ Embeddings are not included. Generate 384-dimensional MiniLM vectors locally wit
 - user_movies: user_id + movie_id composite PK, rating nullable (0.5–5 in half-star increments), watched_at nullable.
 - watchlist: user_id + movie_id composite PK, added_at.
 - cooldowns: user_id + movie_id composite PK, expires_at.
-- lists: id PK, source_url nullable, movie_ids array; add ownership if persisting private lists.
+- lists: id PK, movie_ids array; add ownership if persisting private lists.
 Guest ratings, watched IDs, watchlist, cooldowns, taste and history live in IndexedDB. Guest cooldowns are enforced client-side and sent as validated `excludeIds`. The only guest payload sent to the server is the ratings input to the stateless `POST /taste`; it is never logged or persisted. Account history persistence can be added when accounts are implemented. Guest export protects against browser eviction. All users share the movie catalog.
 
 ## Recommendation algorithm
