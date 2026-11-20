@@ -1,7 +1,6 @@
 # Backlog
 
 ## To do
-- [ ] Expose recommendation API and movie search; add validation and integration tests.
 - [ ] Build minimal recommendation screen: main pick, alternatives, optional prompt.
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
@@ -18,3 +17,4 @@
 - [x] Create movie schema/migrations and idempotent seed importer; verify row counts, duplicates and vector dimensions.
 - [x] Implement pure taste vector calculation and tests (positive/negative ratings, zero norm, invalid input).
 - [x] Implement pgvector search, hard filters, diversity and cold-start fallback; test against fixtures.
+- [x] Expose recommendation API and movie search; add validation and integration tests.
