@@ -21,10 +21,14 @@ API modules: movies, embeddings, recommendations, imports, users. Keep ranking m
 Plain CSS and React Router. No component library, state library or E2E framework. Component tests use Vitest with Testing Library and jsdom.
 
 ## Catalog
-Candidate seed: https://huggingface.co/datasets/RobinMillford/movie-embeddings-rag-db (reported 7,733 movies, 384-dimensional MiniLM vectors). Before adoption, inspect actual files, IDs, metadata, license and upstream rights, duplicates, vector norms and model/preprocessing provenance. These claims have not yet been independently verified in this implementation. Use TMDB for missing metadata/movies subject to its terms. Generate new vectors locally using @huggingface/transformers and compatible MiniLM weights, pooling and normalization. If compatibility cannot be demonstrated, re-embed the catalog consistently rather than mixing vector spaces. Load model once, cache it, batch ingestion; prompt inference only when needed.
+Seed: https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset, a TMDB snapshot of 45,466 films with 26M MovieLens ratings; see `docs/seed-inspection.md` for verified counts and defects. Movie IDs are TMDB IDs; `links.csv` maps MovieLens IDs to them. Coverage is overview 97.9%, runtime 99.4%, poster 99.2%, with a handful of malformed and duplicated IDs to clean at import. The snapshot stops in 2017, so newer releases require a re-import of a fresher snapshot, not user activity.
 
-## Schema (provisional until seed inspection)
-- movies: id PK, tmdb_id nullable unique, title, release_year, overview, runtime, genres, keywords, director, cast, poster_path, popularity nullable, vote_average nullable, vote_count nullable, embedding vector(384), embedding_version. Popularity and vote fields are used for evaluation and display only, never as an eligibility gate. Resolve missing external IDs before linking; do not assume seed IDs are TMDB IDs.
+Kaggle labels the set CC0, but the data is TMDB and GroupLens content. TMDB terms forbid caching beyond six months, dataset collection for ML, and commercial use without an agreement; GroupLens permits research use only. Use it for the local, non-commercial MVP, and treat a public or commercial launch as requiring licensing or a different catalog.
+
+Embeddings are not included. Generate 384-dimensional MiniLM vectors locally with @huggingface/transformers from overview, tagline, keywords and genres. Load the model once, embed the catalog in batches, and use the same model and normalization for prompt text. Keep the ratings file out of the application database and use it only for offline evaluation. Store TMDB poster paths, never full URLs.
+
+## Schema
+- movies: id PK (TMDB ID), tmdb_id nullable unique, title, release_year, overview, runtime, genres, keywords, director, cast, poster_path, popularity nullable, vote_average nullable, vote_count nullable, embedding vector(384), embedding_version. Popularity and vote fields are used for evaluation and display only, never as an eligibility gate. `links.csv` maps MovieLens IDs to `id`; do not infer IDs from titles.
 - users: id PK, email unique, taste_vector nullable, initial_preferences.
 - user_movies: user_id + movie_id composite PK, rating nullable (0.5–5 in half-star increments), watched_at nullable.
 - watchlist: user_id + movie_id composite PK, added_at.

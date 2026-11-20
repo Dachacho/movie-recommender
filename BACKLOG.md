@@ -1,7 +1,6 @@
 # Backlog
 
 ## To do
-- [ ] Inspect seed dataset: schema, license/provenance, IDs, coverage, model compatibility; document findings and decide whether to adopt or re-embed.
 - [ ] Create movie schema/migrations and idempotent seed importer; verify row counts, duplicates and vector dimensions.
 - [ ] Implement pure taste vector calculation and tests (positive/negative ratings, zero norm, invalid input).
 - [ ] Implement pgvector search, hard filters, diversity and cold-start fallback; test against fixtures.
@@ -18,3 +17,4 @@
 
 ## Done
 - [x] Initialize npm workspaces, Express, React/Vite, shared TypeScript configuration, Vitest and Docker Compose PostgreSQL/pgvector.
+- [x] Inspect seed dataset: schema, license/provenance, IDs, coverage, model compatibility; document findings and decide whether to adopt or re-embed.
