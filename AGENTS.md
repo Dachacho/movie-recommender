@@ -122,27 +122,29 @@ Use these headings, kept brief:
 
 <!-- review-workflow:start -->
 ## Review workflow
-These rules add to the project rules above. Where they conflict, the rules above win.
+This section defines how non-trivial work is planned, implemented and reviewed. Where it differs from the workflow and skill defaults in §3, follow this section for review mechanics; PRODUCT.md, ARCHITECTURE.md and the approval gates in §2 still take precedence over it.
 
 Commands:
 - Build: `npm run build` (web only; API and shared have no build step)
 - Typecheck: `npm run typecheck`
 - Lint: `npm run lint`
 - Format check: `npm run format:check`
-- Test: `npm test` (all workspaces); `npm test -w @movie-recommender/api` or `-w @movie-recommender/web` for one
+- Test: `npm test` (all workspaces); `npm test -w @movie-recommender/api` or `-w @movie-recommender/web` for one. Database tests skip unless `DATABASE_URL` is set, so use `DATABASE_URL=… npm test` (see `.env.example`) whenever the step touches the database.
 
 Flow:
-- Every non-trivial task goes plan, then implement, then review. Plan first, and wait for my approval before implementing.
+- Every non-trivial task goes plan, then implement, then review. Present the plan and wait for my approval before implementing. Small, unambiguous changes still follow §3 and may be stated and implemented in the same turn.
 - Split plans into small steps, each with one clear acceptance criterion and a list of the files it will touch.
-- The main agent delegates implementation to the implementer subagent and does not write large changes inline.
-- If the build agent writes code inline, review it with reviewer-strict, because the regular reviewer uses the same model.
-- After each step, run the reviewer. For risky changes (schema or migration changes, API route or shape changes, auth or guest data persistence (IndexedDB), new dependencies, security, and deletions), also run reviewer-strict.
-- Skip review for trivial steps (under about 20 lines, no logic change: renames, copy, formatting), but still run the checks.
+- The main agent delegates planned implementation steps to the implementer subagent. Inline work is limited to trivial changes (under about 20 lines, no logic change).
+- After each step, run the reviewer. Choose a reviewer whose model differs from the writer's actual model: use `reviewer` by default, and `reviewer-strict` instead only when the step qualifies for it (see below). Check the session and agent models; the configured build model is not proof, because a session keeps its own selected model.
+- `reviewer-strict` uses the expensive `gpt-6-luna` model. Run it only for very hard or logic-heavy changes where a wrong result is costly: ranking and taste-vector math, diversity, filters and cooldown logic, vector search, data-transforming migrations, and security-sensitive logic. Routine schema or API wiring, dependency additions, deletions and documentation changes get the regular reviewer only.
+- If the writer shares the selected reviewer's model, ask me for another independent reviewer model instead of using it. Do not spend luna on a step that does not qualify for it.
+- Skip independent review for trivial steps (under about 20 lines, no logic change: renames, copy, formatting), but still run the checks.
 - The self-check (re-read your own full diff) always runs, even when the independent review is skipped.
 - Code is never reviewed by the model that wrote it.
 - Reviewers get only the plan step, the diff, and the raw check output, never the full implementer session.
-- Use the reviewer agents defined here for step review; the general-purpose template in the requesting-code-review skill is not used for this flow.
-- Existing git rules still apply: no commits or pushes; stage only after review passes.
+- For step reviews, use the reviewer agents defined here. The general-purpose template in the requesting-code-review skill is not used for this flow; load that skill only when I ask for a review outside it.
+- When acting on reviewer findings, follow the receiving-code-review skill: verify each finding against the code, push back with reasoning if it is wrong, and fix one item at a time.
+- Existing git rules still apply: no commits or pushes unless I explicitly ask in that session. Stage only after review passes.
 
 Definition of done:
 - A step is done only when the build/typecheck/lint/format check/tests pass and the raw output is shown.
@@ -153,7 +155,7 @@ Definition of done:
 - Skipped tests are not passed. If DB tests were skipped because DATABASE_URL isn't set, say so explicitly, and the reviewer must flag it when the step touches DB code.
 
 Discipline:
-- Reviewers never edit files.
+- Reviewers never edit files. Their agent permissions deny both edits and shell commands.
 - Stay in scope. Do not refactor, rename, or "improve" things the step didn't ask for.
 - Keep sessions short. Compact or start a fresh subagent before the context gets to about 250K tokens.
 <!-- review-workflow:end -->

@@ -1,9 +1,12 @@
 ---
-description: "Second-opinion review, only for risky changes: schema or migration changes, API route or shape changes, auth or guest data persistence (IndexedDB), new dependencies, security, and deletions."
+description: "Independent reviewer for very hard or logic-heavy changes only: ranking and taste math, diversity, filters, cooldowns, vector search, data-transforming migrations, and security-sensitive logic."
 mode: subagent
 model: opencode-go/gpt-6-luna
 permissions:
   - action: edit
+    resource: "*"
+    effect: deny
+  - action: shell
     resource: "*"
     effect: deny
 ---
