@@ -28,7 +28,7 @@ Kaggle labels the set CC0, but the data is TMDB and GroupLens content. TMDB term
 Embeddings are not included. Generate 384-dimensional MiniLM vectors locally with @huggingface/transformers from overview, tagline, keywords and genres. Load the model once, embed the catalog in batches, and use the same model and normalization for prompt text. Keep the ratings file out of the application database and use it only for offline evaluation. Store TMDB poster paths, never full URLs.
 
 ## Schema
-- movies: id PK (TMDB ID), tmdb_id nullable unique, title, release_year, overview, runtime, genres, keywords, director, cast, poster_path, popularity nullable, vote_average nullable, vote_count nullable, embedding vector(384), embedding_version. Popularity and vote fields are used for evaluation and display only, never as an eligibility gate. `links.csv` maps MovieLens IDs to `id`; do not infer IDs from titles.
+- movies: id PK (TMDB ID), title, release_year, overview, tagline, runtime, genres, keywords, director, cast, poster_path, popularity nullable, vote_average nullable, vote_count nullable, embedding vector(384), embedding_version. Popularity and vote fields are used for evaluation and display only, never as an eligibility gate. `links.csv` maps MovieLens IDs to `id`; do not infer IDs from titles.
 - users: id PK, email unique, taste_vector nullable, initial_preferences.
 - user_movies: user_id + movie_id composite PK, rating nullable (0.5–5 in half-star increments), watched_at nullable.
 - watchlist: user_id + movie_id composite PK, added_at.

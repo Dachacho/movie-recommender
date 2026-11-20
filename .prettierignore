@@ -3,6 +3,7 @@ dist/
 coverage/
 .agents/
 .opencode/
+apps/api/drizzle/meta/
 package-lock.json
 skills-lock.json
 *.md
