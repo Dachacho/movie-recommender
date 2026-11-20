@@ -33,3 +33,94 @@ export const apiErrorSchema = z.object({
   }),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;
+
+export const tasteRatingSchema = z.object({
+  movieId: z.number().int().positive().max(2_147_483_647),
+  rating: z
+    .number()
+    .refine((value) => Number.isFinite(value), 'rating must be finite')
+    .min(0.5)
+    .max(5)
+    .refine((value) => Number.isInteger(value * 2), 'rating must be a half-star value'),
+});
+export const tasteRequestSchema = z.object({
+  ratings: z
+    .array(tasteRatingSchema)
+    .min(1)
+    .max(500)
+    .refine(
+      (ratings) => new Set(ratings.map((entry) => entry.movieId)).size === ratings.length,
+      'movieId values must be unique',
+    ),
+});
+export type TasteRequest = z.infer<typeof tasteRequestSchema>;
+
+export const tasteResponseSchema = z.object({
+  tasteVector: z.array(z.number()).length(384).nullable(),
+});
+export type TasteResponse = z.infer<typeof tasteResponseSchema>;
+
+export const RECOMMENDATION_SOURCES = ['catalog', 'watchlist', 'list'] as const;
+export type RecommendationSource = (typeof RECOMMENDATION_SOURCES)[number];
+
+export const recommendationSourceSchema = z.enum(RECOMMENDATION_SOURCES);
+
+const movieIdsSchema = z
+  .array(z.number().int().positive().max(2_147_483_647))
+  .max(10_000)
+  .refine((ids) => new Set(ids).size === ids.length, 'movie ids must be unique');
+
+export const tasteVectorSchema = z
+  .array(
+    z
+      .number()
+      .refine((value) => Number.isFinite(value), 'taste vector values must be finite')
+      .refine(
+        (value) => Math.abs(value) <= 10,
+        'taste vector values must be at most 10 in magnitude',
+      ),
+  )
+  .length(384);
+
+export const recommendationRequestSchema = z
+  .object({
+    source: recommendationSourceSchema,
+    tasteVector: tasteVectorSchema.nullish(),
+    candidateIds: movieIdsSchema.optional(),
+    excludeIds: movieIdsSchema.optional(),
+    limit: z.number().int().min(1).max(4),
+  })
+  .superRefine((value, ctx) => {
+    if (value.source === 'catalog') {
+      if (value.candidateIds !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['candidateIds'],
+          message: 'candidateIds must be omitted when source is catalog.',
+        });
+      }
+
+      return;
+    }
+
+    if (value.candidateIds === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['candidateIds'],
+        message: 'candidateIds is required when source is watchlist or list.',
+      });
+    } else if (value.candidateIds.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['candidateIds'],
+        message: 'candidateIds must not be empty when source is watchlist or list.',
+      });
+    }
+  });
+export type RecommendationRequest = z.infer<typeof recommendationRequestSchema>;
+
+export const recommendationResponseSchema = z.object({
+  movies: z.array(movieCardSchema),
+  coldStart: z.boolean(),
+});
+export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
