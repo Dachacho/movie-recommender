@@ -37,6 +37,7 @@ Overviews average 55 words (median 48); 9,285 are shorter than 25 words. Runtime
 ## Defects
 
 - Three malformed `id` values that are dates: `1997-08-20`, `2012-09-29`, `2014-01-01`.
+- Six rows are truncated: the trailing columns are missing, so fields such as `title`, `status` and `runtime` read as empty. The parser treats missing values as empty and cleaning drops the rows.
 - 45,436 unique IDs across 45,466 rows; 29 IDs are duplicated.
 - 959 rows have an empty overview, 386 have no poster, 263 have no runtime.
 - `status` is `Released` for 45,014 rows, `Rumored` for 230, `Post Production` for 98, blank for 81.
@@ -45,7 +46,7 @@ Overviews average 55 words (median 48); 9,285 are shorter than 25 words. Runtime
 
 ## Embeddings
 
-No vectors are included. Generate 384-dimensional MiniLM embeddings locally from `overview`, `tagline`, `keywords` and `genres`, using `@huggingface/transformers` as ARCHITECTURE.md specifies. Stored as `vector(384)`, roughly 70 MB for the full catalog. The model is loaded once and the whole catalog is embedded in one batch pass.
+No vectors are included. Generate 384-dimensional MiniLM embeddings locally from `overview`, `tagline`, `keywords` and `genres`, using `@huggingface/transformers` as ARCHITECTURE.md specifies. The weights are pinned to `Xenova/all-MiniLM-L6-v2` at revision `751bff37182d3f1213fa05d7196b954e230abad9` and run in their int8 (`q8`) form, which is roughly twice as fast as fp32 on this machine with no measurable difference for retrieval. The revision, quantization, mean pooling and normalization are recorded in `embedding_version` on every row. Stored as `vector(384)`, roughly 70 MB for the full catalog. The model is loaded once and the whole catalog is embedded in batch runs.
 
 ## License and provenance
 
@@ -69,7 +70,31 @@ The 26M ratings are not imported into the application database. Guests rate loca
 7. Take one director and a bounded list of cast members from `credits.csv`.
 8. Store `poster_path` as the TMDB path only, never a full URL.
 
-Expected result: about 45,200 rows.
+Verified result of the rules against the downloaded files:
+
+| Step | Rows |
+|---|---|
+| Raw `movies_metadata.csv` | 45,466 |
+| Numeric TMDB id | 45,463 |
+| Released and not adult | 45,006 |
+| Title plus an overview or keywords | 44,287 |
+| After collapsing duplicate ids | **44,258** |
+
+## Importing
+
+Extract the Kaggle archive, then from the repository root:
+
+```sh
+npm run db:migrate
+npm run catalog:import -- --data-dir /path/to/extracted
+npm run catalog:verify
+```
+
+`catalog:import` reads `movies_metadata.csv`, `credits.csv` and `keywords.csv` from the given directory, cleans and deduplicates the rows, embeds them locally and upserts on the TMDB id, so re-running it refreshes the catalog instead of duplicating it. Add `--limit 2000` for a small development subset. `catalog:verify` reports the total, the number of embedded rows, the number of rows whose vector is not 384-dimensional, and rows without a release year.
+
+The model weights are cached in `apps/api/.cache/transformers` (gitignored). The ratings file is not imported.
+
+The full run imported all 44,258 rows in about 32 minutes. `catalog:verify` reported 44,258 total, 44,258 embedded, 0 rows with a vector other than 384 dimensions, and 65 rows without a release year. Re-importing a 200-row slice left the total unchanged, confirming the upsert is idempotent.
 
 ## Candidates rejected
 
