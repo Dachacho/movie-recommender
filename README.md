@@ -34,6 +34,9 @@ npm run db:up          # PostgreSQL 17 + pgvector on localhost:5432
 npm run db:migrate     # creates the movies table and the vector extension
 ```
 
+`db:up` returns before the container's healthcheck passes. If the migration runs
+too early, wait for `docker compose ps` to show `healthy` and run it again.
+
 ### 1. Import the catalog
 
 Download the Kaggle dataset
@@ -109,7 +112,9 @@ cd apps/api && npx vitest run src/modules/recommendations
 
 ## API
 
-Base URL: `http://localhost:3000`. JSON only. Every error uses the same shape:
+Base URL: `http://localhost:3000`. JSON only. Every error uses the same envelope;
+`details` is optional and its shape depends on the code (Zod issues for
+`invalid_request`, `{ "movieIds": [...] }` for `unknown_movie_ids`):
 
 ```json
 { "error": { "code": "invalid_request", "message": "…", "details": [] } }
@@ -122,6 +127,10 @@ Base URL: `http://localhost:3000`. JSON only. Every error uses the same shape:
 | `GET` | `/movies/:id` | One movie card |
 | `POST` | `/taste` | Ratings → normalized taste vector, or `null` |
 | `POST` | `/recommendations` | Up to four ranked movies plus a cold-start flag |
+
+`GET /movies/search` responds with `{ "movies": [ …cards… ] }`.
+`GET /movies/:id` responds with `{ "movie": { …card… } }`. Both use the card
+shape below.
 
 ### Movie card
 
@@ -142,6 +151,9 @@ Base URL: `http://localhost:3000`. JSON only. Every error uses the same shape:
 
 `posterPath` is a TMDB path, never a full URL. Use it with the TMDB image base
 (`https://image.tmdb.org/t/p/w500`) subject to TMDB's terms.
+
+`releaseYear`, `runtime`, `overview`, `director`, `posterPath` and `voteAverage`
+are nullable; the catalog has films with missing metadata.
 
 ### Taste
 
@@ -169,13 +181,15 @@ curl -s -X POST http://localhost:3000/recommendations \
 { "movies": [ { "id": 862, "title": "Toy Story", "…": "…" } ], "coldStart": true }
 ```
 
-- `source`: `catalog`, `watchlist` or `list`.
+- `source`: required; `catalog`, `watchlist` or `list`.
 - `catalog` must omit `candidateIds`; `watchlist`/`list` require a non-empty
   `candidateIds` array (the client's local list).
+- `candidateIds` and `excludeIds`: at most 10,000 unique ids each.
 - `tasteVector`: optional 384-d vector, finite, `|value| ≤ 10`. Omit or send
   `null` for cold start.
 - `excludeIds`: optional watched/cooldown ids.
-- `limit`: 1–4.
+- `limit`: required, 1–4.
+- Bodies over 256 kB return `413 payload_too_large`.
 - Popularity and vote counts are never eligibility gates.
 
 The request does not accept the optional prompt or runtime/genre filters yet;
