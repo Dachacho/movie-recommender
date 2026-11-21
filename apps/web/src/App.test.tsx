@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import type { MovieCard } from '@movie-recommender/shared';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { App } from './App';
+import { GuestProfile } from './profile/GuestProfile';
+import { MemoryGuestProfileStorage } from './profile/memoryStorage';
 
 afterEach(() => {
   cleanup();
@@ -103,8 +105,8 @@ function getForm(): HTMLFormElement {
   return form;
 }
 
-function submittedBody(fetchMock: Mock<typeof fetch>): Record<string, unknown> {
-  const call = fetchMock.mock.calls[0];
+function submittedBody(fetchMock: Mock<typeof fetch>, callIndex = 0): Record<string, unknown> {
+  const call = fetchMock.mock.calls[callIndex];
 
   if (call === undefined) {
     throw new Error('fetch was not called');
@@ -119,6 +121,34 @@ function submittedBody(fetchMock: Mock<typeof fetch>): Record<string, unknown> {
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
+const TASTE_VECTOR = Array.from({ length: 384 }, (_value, index) => (index === 0 ? 1 : 0));
+
+function createProfile(): GuestProfile {
+  return new GuestProfile(new MemoryGuestProfileStorage());
+}
+
+function renderApp(profile: GuestProfile = createProfile()): ReturnType<typeof render> {
+  return render(<App profile={profile} />);
+}
+
+function recommendationResponse(): Response {
+  return jsonResponse({ movies: [ARRIVAL], coldStart: false });
+}
+
+function stubTasteAndRecommendations(tasteVector: unknown): Mock<typeof fetch> {
+  const fetchMock = stubFetch();
+
+  fetchMock.mockImplementation(async (input) => {
+    if (input === '/api/taste') {
+      return jsonResponse({ tasteVector });
+    }
+
+    return recommendationResponse();
+  });
+
+  return fetchMock;
+}
+
 async function submitPrompt(prompt: string): Promise<void> {
   fireEvent.change(getPromptInput(), { target: { value: prompt } });
   fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
@@ -126,7 +156,7 @@ async function submitPrompt(prompt: string): Promise<void> {
 
 describe('App', () => {
   it('shows the heading, prompt label and button before any request', () => {
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole('heading', { name: 'Movie recommender' })).toBeTruthy();
     expect(getPromptInput().value).toBe('');
@@ -137,7 +167,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL], coldStart: false }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('  a quiet science fiction film  ');
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -154,7 +184,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL], coldStart: true }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('   ');
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -165,7 +195,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
 
-    render(<App />);
+    renderApp();
     const form = getForm();
     fireEvent.submit(form);
     fireEvent.submit(form);
@@ -185,7 +215,7 @@ describe('App', () => {
       }),
     );
 
-    render(<App />);
+    renderApp();
     await submitPrompt('something thoughtful');
 
     const mainPick = await screen.findByRole('article', { name: 'Main pick' });
@@ -211,7 +241,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('');
 
     await screen.findByRole('heading', { name: 'Arrival' });
@@ -226,7 +256,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [PADDINGTON_2], coldStart: false }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('');
 
     expect(
@@ -238,7 +268,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [BROKEN_POSTER], coldStart: false }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('');
 
     fireEvent.error(await screen.findByAltText('Poster for Broken Poster'));
@@ -254,7 +284,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [], coldStart: true }));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('something impossible');
 
     expect(await screen.findByText('No picks tonight. Try a different direction.')).toBeTruthy();
@@ -274,7 +304,7 @@ describe('App', () => {
       ),
     );
 
-    render(<App />);
+    renderApp();
     await submitPrompt('');
 
     const message = await screen.findByText('Too many recommendation requests. Try again later.');
@@ -291,7 +321,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
-    render(<App />);
+    renderApp();
     await submitPrompt('');
 
     expect(
@@ -300,5 +330,106 @@ describe('App', () => {
       ),
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Find my movie' })).toBeTruthy();
+  });
+
+  it('requests a taste vector and excludes watched movies from recommendations', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.setRating(1, 4.5);
+    await profile.setWatched(3);
+
+    renderApp(profile);
+    await submitPrompt('  quiet science fiction  ');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
+    expect(submittedBody(fetchMock, 0)).toEqual({ ratings: [{ movieId: 1, rating: 4.5 }] });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      prompt: 'quiet science fiction',
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [3],
+    });
+  });
+
+  it('calls only recommendations when the guest has no ratings', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+
+    renderApp();
+    await submitPrompt('');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock)).toEqual({ source: 'catalog', limit: 4 });
+  });
+
+  it('continues without a taste vector when the taste response is null', async () => {
+    const fetchMock = stubTasteAndRecommendations(null);
+    const profile = createProfile();
+
+    await profile.setRating(1, 2);
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
+    expect(submittedBody(fetchMock, 1)).toEqual({ source: 'catalog', limit: 4 });
+  });
+
+  it('caches the taste vector until the profile version changes', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+
+    renderApp(profile);
+    await submitPrompt('');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByRole('button', { name: 'Find my movie' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await screen.findByRole('button', { name: 'Find my movie' });
+
+    await profile.setRating(2, 3);
+    fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+
+    const tasteCalls = fetchMock.mock.calls.filter(([input]) => input === '/api/taste');
+    expect(tasteCalls).toHaveLength(2);
+    expect(submittedBody(fetchMock, 4)).toMatchObject({
+      tasteVector: TASTE_VECTOR,
+    });
+  });
+
+  it('shows the taste error without requesting recommendations', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: 'unknown_movie_ids',
+            message: 'Some movie ids are missing or have no embedding.',
+          },
+        },
+        400,
+      ),
+    );
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    expect(
+      await screen.findByText('Some movie ids are missing or have no embedding.'),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
   });
 });

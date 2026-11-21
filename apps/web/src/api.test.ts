@@ -1,6 +1,11 @@
 import type { MovieCard } from '@movie-recommender/shared';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { RecommendationApiError, RecommendationNetworkError, fetchRecommendations } from './api';
+import {
+  RecommendationApiError,
+  RecommendationNetworkError,
+  fetchRecommendations,
+  fetchTasteVector,
+} from './api';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -49,7 +54,11 @@ describe('fetchRecommendations', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [MOVIE], coldStart: false }));
 
-    const result = await fetchRecommendations({ prompt: 'quiet science fiction' });
+    const result = await fetchRecommendations({
+      source: 'catalog',
+      limit: 4,
+      prompt: 'quiet science fiction',
+    });
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/recommendations');
     expect(submittedBody(fetchMock)).toEqual({
@@ -69,7 +78,7 @@ describe('fetchRecommendations', () => {
       ),
     );
 
-    await expect(fetchRecommendations({})).rejects.toMatchObject({
+    await expect(fetchRecommendations({ source: 'catalog', limit: 4 })).rejects.toMatchObject({
       name: 'RecommendationApiError',
       code: 'invalid_request',
       message: 'prompt must be 300 characters or fewer',
@@ -80,7 +89,7 @@ describe('fetchRecommendations', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse('<html>gateway timeout</html>', 502));
 
-    const error: unknown = await fetchRecommendations({}).then(
+    const error: unknown = await fetchRecommendations({ source: 'catalog', limit: 4 }).then(
       () => undefined,
       (reason: unknown) => reason,
     );
@@ -96,7 +105,7 @@ describe('fetchRecommendations', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [{ title: 'Not a movie card' }] }));
 
-    await expect(fetchRecommendations({})).rejects.toMatchObject({
+    await expect(fetchRecommendations({ source: 'catalog', limit: 4 })).rejects.toMatchObject({
       name: 'RecommendationApiError',
       code: 'invalid_response',
     });
@@ -106,7 +115,7 @@ describe('fetchRecommendations', () => {
     const fetchMock = stubFetch();
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
-    const error: unknown = await fetchRecommendations({}).then(
+    const error: unknown = await fetchRecommendations({ source: 'catalog', limit: 4 }).then(
       () => undefined,
       (reason: unknown) => reason,
     );
@@ -115,5 +124,68 @@ describe('fetchRecommendations', () => {
     expect(error).toMatchObject({
       message: 'Could not reach the recommendation service. Check your connection and try again.',
     });
+  });
+});
+
+const TASTE_VECTOR = Array.from({ length: 384 }, (_value, index) => (index === 0 ? 1 : 0));
+
+describe('fetchTasteVector', () => {
+  it('posts the ratings and returns the parsed taste vector', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ tasteVector: TASTE_VECTOR }));
+
+    const ratings = [
+      { movieId: 7, rating: 4.5 },
+      { movieId: 3, rating: 2 },
+    ];
+    const result = await fetchTasteVector(ratings);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(submittedBody(fetchMock)).toEqual({ ratings });
+    expect(result).toEqual(TASTE_VECTOR);
+  });
+
+  it('returns null for a cold-start taste response', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ tasteVector: null }));
+
+    await expect(fetchTasteVector([{ movieId: 7, rating: 2.5 }])).resolves.toBeNull();
+  });
+
+  it('rejects with the API error code and message for a non-2xx response', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: 'unknown_movie_ids', message: 'Some movie ids are missing.' } },
+        400,
+      ),
+    );
+
+    await expect(fetchTasteVector([{ movieId: 7, rating: 4 }])).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'unknown_movie_ids',
+      message: 'Some movie ids are missing.',
+    });
+  });
+
+  it('rejects an unexpected success payload instead of returning it', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ tasteVector: [1, 2, 3] }));
+
+    await expect(fetchTasteVector([{ movieId: 7, rating: 4 }])).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_response',
+      message: 'The taste service returned an unexpected response. Try again.',
+    });
+  });
+
+  it('rejects with a network error when fetch fails', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(fetchTasteVector([{ movieId: 7, rating: 4 }])).rejects.toBeInstanceOf(
+      RecommendationNetworkError,
+    );
   });
 });

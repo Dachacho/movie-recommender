@@ -1,6 +1,14 @@
 import { useRef, useState, type FormEvent } from 'react';
 import type { MovieCard, RecommendationResponse } from '@movie-recommender/shared';
-import { RecommendationApiError, RecommendationNetworkError, fetchRecommendations } from './api';
+import {
+  RecommendationApiError,
+  RecommendationNetworkError,
+  fetchRecommendations,
+  fetchTasteVector,
+  type TasteVector,
+} from './api';
+import { createGuestProfile, type GuestProfile, type RatingsPayload } from './profile/GuestProfile';
+import { buildRecommendationInput } from './recommendationInput';
 
 type ScreenState =
   | { status: 'idle' }
@@ -8,7 +16,37 @@ type ScreenState =
   | { status: 'results'; requestId: number; response: RecommendationResponse }
   | { status: 'error'; message: string };
 
+interface TasteCache {
+  version: number;
+  vector: TasteVector;
+}
+
+export interface AppProps {
+  /** Injected in tests; the app uses a Dexie-backed profile. */
+  profile?: GuestProfile;
+}
+
 const POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w500';
+
+async function tasteVectorFor(
+  ratings: RatingsPayload,
+  version: number,
+  cache: TasteCache | null,
+  cacheUpdater: (next: TasteCache) => void,
+): Promise<TasteVector> {
+  if (ratings.length === 0) {
+    return null;
+  }
+
+  if (cache !== null && cache.version === version) {
+    return cache.vector;
+  }
+
+  const vector = await fetchTasteVector(ratings);
+  cacheUpdater({ version, vector });
+
+  return vector;
+}
 
 function posterUrl(posterPath: string): string {
   return `${POSTER_BASE_URL}${posterPath}`;
@@ -95,10 +133,12 @@ function Alternatives({ movies }: { movies: MovieCard[] }) {
   );
 }
 
-export function App() {
+export function App({ profile: providedProfile }: AppProps = {}) {
+  const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
   const [prompt, setPrompt] = useState('');
   const [state, setState] = useState<ScreenState>({ status: 'idle' });
   const requestId = useRef(0);
+  const tasteCache = useRef<TasteCache | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,16 +147,27 @@ export function App() {
       return;
     }
 
-    const trimmedPrompt = prompt.trim();
     requestId.current += 1;
     const currentRequestId = requestId.current;
 
     setState({ status: 'pending' });
 
     try {
-      const response = await fetchRecommendations(
-        trimmedPrompt === '' ? {} : { prompt: trimmedPrompt },
+      const profileVersion = profile.getVersion();
+      const [ratings, watchedIds] = await Promise.all([
+        profile.ratingsPayload(),
+        profile.getWatchedIds(),
+      ]);
+      const tasteVector = await tasteVectorFor(
+        ratings,
+        profileVersion,
+        tasteCache.current,
+        (next) => {
+          tasteCache.current = next;
+        },
       );
+      const request = buildRecommendationInput(ratings, watchedIds, tasteVector, prompt);
+      const response = await fetchRecommendations(request);
 
       setState({ status: 'results', requestId: currentRequestId, response });
     } catch (error) {
