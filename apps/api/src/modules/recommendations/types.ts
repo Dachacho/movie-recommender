@@ -13,6 +13,8 @@ export interface RecommendationFilters {
 export interface MovieCandidate {
   movieId: number;
   embedding: number[];
+  voteAverage: number | null;
+  voteCount: number | null;
 }
 
 export interface ScoredCandidate extends MovieCandidate {

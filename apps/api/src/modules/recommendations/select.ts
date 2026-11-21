@@ -3,6 +3,50 @@ import type { ScoredCandidate } from './types.js';
 export const DEFAULT_DIVERSITY_PENALTY = 0.3;
 export const MAX_RECOMMENDATIONS = 4;
 
+/**
+ * Interim, product-approved strength of the reception tilt. Cosine similarity
+ * remains the primary sort: the maximum possible tilt (0.05) is smaller than a
+ * meaningful taste gap, so it only breaks near-ties. Retune against held-out
+ * evaluation evidence before changing it.
+ */
+export const QUALITY_TILT_WEIGHT = 0.05;
+
+/**
+ * Divisor that scales the log vote count. log10(1 + 10M) = 7.0, so a ~10M-vote
+ * film normalizes to 7 / 6 = 1.17 and clamps to 1, while a ~100-vote film
+ * normalizes to log10(101) / 6 = 0.334.
+ */
+export const LOG_VOTE_SCALE = 6;
+
+const VOTE_COUNT_WEIGHT = 0.7;
+const VOTE_AVERAGE_WEIGHT = 0.3;
+
+function clampUnit(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Pure reception score in [0, 1]: 0.7 * log-scaled vote count plus 0.3 * the
+ * vote average on a ten-point scale. Null fields contribute 0, and inputs are
+ * clamped so malformed data cannot amplify the tilt.
+ */
+export function qualityScore(voteAverage: number | null, voteCount: number | null): number {
+  const votes =
+    voteCount === null || !Number.isFinite(voteCount)
+      ? 0
+      : clampUnit(Math.log10(1 + Math.max(0, voteCount)) / LOG_VOTE_SCALE);
+  const average =
+    voteAverage === null || !Number.isFinite(voteAverage) ? 0 : clampUnit(voteAverage / 10);
+
+  return VOTE_COUNT_WEIGHT * votes + VOTE_AVERAGE_WEIGHT * average;
+}
+
+function relevance(candidate: ScoredCandidate): number {
+  const tilt = QUALITY_TILT_WEIGHT * qualityScore(candidate.voteAverage, candidate.voteCount);
+
+  return candidate.similarity + tilt;
+}
+
 export interface SelectedRecommendation {
   movieId: number;
   similarity: number;
@@ -114,8 +158,10 @@ function scoreCandidate(
   selected: readonly ScoredCandidate[],
   penalty: number,
 ): number {
+  const baseScore = relevance(candidate);
+
   if (selected.length === 0) {
-    return candidate.similarity;
+    return baseScore;
   }
 
   let maxSelectedSimilarity = Number.NEGATIVE_INFINITY;
@@ -128,7 +174,7 @@ function scoreCandidate(
     }
   }
 
-  return candidate.similarity - penalty * maxSelectedSimilarity;
+  return baseScore - penalty * maxSelectedSimilarity;
 }
 
 export function selectDiverse(

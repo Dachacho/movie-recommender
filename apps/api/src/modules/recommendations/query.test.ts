@@ -17,18 +17,46 @@ interface Fixture {
   releaseYear: number | null;
   genres: string[];
   components: ReadonlyArray<readonly [number, number]> | null;
+  voteAverage: number | null;
+  voteCount: number | null;
 }
 
 const FIXTURES: readonly Fixture[] = [
-  { id: 991_000_001, runtime: 90, releaseYear: 1990, genres: ['Drama'], components: [[0, 1]] },
-  { id: 991_000_002, runtime: 100, releaseYear: 1995, genres: ['Comedy'], components: [[0, 1]] },
-  { id: 991_000_003, runtime: 120, releaseYear: 2000, genres: ['Action'], components: [[0, 1]] },
+  {
+    id: 991_000_001,
+    runtime: 90,
+    releaseYear: 1990,
+    genres: ['Drama'],
+    components: [[0, 1]],
+    voteAverage: 7.5,
+    voteCount: 1_000,
+  },
+  {
+    id: 991_000_002,
+    runtime: 100,
+    releaseYear: 1995,
+    genres: ['Comedy'],
+    components: [[0, 1]],
+    voteAverage: 6,
+    voteCount: 500,
+  },
+  {
+    id: 991_000_003,
+    runtime: 120,
+    releaseYear: 2000,
+    genres: ['Action'],
+    components: [[0, 1]],
+    voteAverage: null,
+    voteCount: null,
+  },
   {
     id: 991_000_004,
     runtime: 150,
     releaseYear: 2005,
     genres: ['Drama'],
     components: [[1, 1]],
+    voteAverage: 8.2,
+    voteCount: 20_000,
   },
   {
     id: 991_000_005,
@@ -36,6 +64,8 @@ const FIXTURES: readonly Fixture[] = [
     releaseYear: 2010,
     genres: ['Comedy'],
     components: [[1, 1]],
+    voteAverage: 5.5,
+    voteCount: 80,
   },
   {
     id: 991_000_006,
@@ -43,8 +73,18 @@ const FIXTURES: readonly Fixture[] = [
     releaseYear: 1990,
     genres: ['Action'],
     components: [[2, 1]],
+    voteAverage: 7,
+    voteCount: 3,
   },
-  { id: 991_000_007, runtime: 120, releaseYear: 1995, genres: ['Drama'], components: [[2, 1]] },
+  {
+    id: 991_000_007,
+    runtime: 120,
+    releaseYear: 1995,
+    genres: ['Drama'],
+    components: [[2, 1]],
+    voteAverage: 6.8,
+    voteCount: 400,
+  },
   {
     id: 991_000_008,
     runtime: 150,
@@ -54,6 +94,8 @@ const FIXTURES: readonly Fixture[] = [
       [0, 0.6],
       [1, 0.8],
     ],
+    voteAverage: 8.8,
+    voteCount: 12_000,
   },
   {
     id: 991_000_009,
@@ -64,14 +106,26 @@ const FIXTURES: readonly Fixture[] = [
       [1, 0.6],
       [2, 0.8],
     ],
+    voteAverage: 4.2,
+    voteCount: 60,
   },
-  { id: 991_000_010, runtime: 100, releaseYear: 2010, genres: ['Drama'], components: null },
+  {
+    id: 991_000_010,
+    runtime: 100,
+    releaseYear: 2010,
+    genres: ['Drama'],
+    components: null,
+    voteAverage: null,
+    voteCount: null,
+  },
   {
     id: NULL_METADATA_ID,
     runtime: null,
     releaseYear: null,
     genres: ['Drama'],
     components: [[0, 1]],
+    voteAverage: null,
+    voteCount: null,
   },
 ];
 
@@ -109,6 +163,8 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
         releaseYear: fixture.releaseYear,
         runtime: fixture.runtime,
         genres: fixture.genres,
+        voteAverage: fixture.voteAverage,
+        voteCount: fixture.voteCount,
         embedding: fixture.components === null ? null : embeddingWithComponents(fixture.components),
         embeddingVersion: 'recommendation-query-test',
       })),
@@ -135,6 +191,10 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
       expect(rows[0]?.similarity).toBeCloseTo(1, 6);
       expect(rows[3]?.similarity).toBeCloseTo(0.6, 6);
       expect(rows[0]?.embedding).toHaveLength(EXPECTED_EMBEDDING_DIMENSIONS);
+      expect(rows[0]?.voteAverage).toBeCloseTo(7.5, 6);
+      expect(rows[0]?.voteCount).toBe(1_000);
+      expect(rows[2]?.voteAverage).toBeNull();
+      expect(rows[2]?.voteCount).toBeNull();
     });
 
     it('removes excluded ids', async () => {
@@ -206,6 +266,11 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
       for (const row of first) {
         expect(row.embedding).toHaveLength(EXPECTED_EMBEDDING_DIMENSIONS);
       }
+
+      expect(first.find((row) => row.movieId === 991_000_008)?.voteAverage).toBeCloseTo(8.8, 6);
+      expect(first.find((row) => row.movieId === 991_000_008)?.voteCount).toBe(12_000);
+      expect(first.find((row) => row.movieId === 991_000_003)?.voteAverage).toBeNull();
+      expect(first.find((row) => row.movieId === 991_000_003)?.voteCount).toBeNull();
     });
 
     it('removes excluded ids', async () => {

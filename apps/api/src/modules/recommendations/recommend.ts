@@ -28,6 +28,10 @@ function validateLimit(limit: number): void {
 
 function rankAsRelevance(pool: readonly MovieCandidate[]): ScoredCandidate[] {
   // Cold start has no query vector, so pool rank stands in for relevance.
+  // selectDiverse still adds the small quality tilt: with no taste signal there
+  // is nothing to protect, so well-received films may move up a rank or two,
+  // while wider rank gaps keep pool order dominant. Pool order (md5 of the id)
+  // and vote fields are deterministic, so the outcome is stable.
   return pool.map((candidate, index) => ({
     ...candidate,
     similarity: 1 - index / pool.length,

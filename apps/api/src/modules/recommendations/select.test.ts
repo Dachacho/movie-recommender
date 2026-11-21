@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DIVERSITY_PENALTY, MAX_RECOMMENDATIONS, selectDiverse } from './select.js';
+import {
+  DEFAULT_DIVERSITY_PENALTY,
+  MAX_RECOMMENDATIONS,
+  qualityScore,
+  selectDiverse,
+} from './select.js';
 import type { ScoredCandidate } from './types.js';
 
 function candidate(
   movieId: number,
   embedding: readonly number[],
   similarity: number,
+  voteAverage: number | null = null,
+  voteCount: number | null = null,
 ): ScoredCandidate {
-  return { movieId, embedding: [...embedding], similarity };
+  return { movieId, embedding: [...embedding], similarity, voteAverage, voteCount };
 }
 
 const TASTE_ALIGNED = [1, 0, 0];
@@ -18,6 +25,40 @@ const ORTHOGONAL = [0, 1, 0];
 const highest = candidate(1, TASTE_ALIGNED, 0.9);
 const nearDuplicate = candidate(2, NEAR_DUPLICATE, 0.85);
 const diverse = candidate(3, DIVERSE, 0.8);
+
+describe('qualityScore', () => {
+  it('contributes nothing when both vote fields are null or zero', () => {
+    expect(qualityScore(null, null)).toBe(0);
+    expect(qualityScore(0, 0)).toBe(0);
+  });
+
+  it('scores a heavily voted, top-rated film near 1', () => {
+    // log10(1 + 10M) / 6 = 1.167, clamped to 1; (10 / 10) = 1.
+    expect(qualityScore(10, 10_000_000)).toBeCloseTo(1, 12);
+  });
+
+  it('gives a ~100-vote film about a third of the vote weight', () => {
+    // log10(101) / 6 = 0.334; 0.7 * 0.334 + 0.3 * 0.3 = 0.534.
+    expect(qualityScore(10, 100)).toBeCloseTo(0.53384, 5);
+    expect(qualityScore(null, 100)).toBeCloseTo(0.23384, 5);
+  });
+
+  it('blends votes and average with fixed 0.7 / 0.3 weights', () => {
+    // log10(5001) / 6 = 0.617 -> 0.7 * 0.617 + 0.3 * 0.8 = 0.672.
+    expect(qualityScore(8, 5_000)).toBeCloseTo(0.67156, 5);
+    expect(qualityScore(10, null)).toBe(0.3);
+  });
+
+  it('increases with votes and with the average', () => {
+    expect(qualityScore(7, 10_000)).toBeGreaterThan(qualityScore(7, 100));
+    expect(qualityScore(8, 1_000)).toBeGreaterThan(qualityScore(5, 1_000));
+  });
+
+  it('clamps out-of-range data to the 0..1 range', () => {
+    expect(qualityScore(20, 1_000_000_000)).toBe(1);
+    expect(qualityScore(-1, -5)).toBe(0);
+  });
+});
 
 describe('selectDiverse', () => {
   describe('first pick', () => {
@@ -99,6 +140,62 @@ describe('selectDiverse', () => {
       expect(result.map((pick) => pick.movieId)).toEqual([1, 2]);
       expect(result[1]?.score).toBeCloseTo(0.8, 12);
       expect(Number.isNaN(result[1]?.score)).toBe(false);
+    });
+  });
+
+  describe('quality tilt', () => {
+    it('keeps a clear taste match ahead of a more popular, poorly matched film', () => {
+      const result = selectDiverse(
+        [candidate(1, TASTE_ALIGNED, 0.9, 5, 10), candidate(2, ORTHOGONAL, 0.8, 9.5, 2_000_000)],
+        { limit: 1 },
+      );
+
+      expect(result.map((pick) => pick.movieId)).toEqual([1]);
+      expect(result[0]?.score).toBeCloseTo(0.91357, 5);
+    });
+
+    it('tie-breaks comparable taste matches toward the better-received film', () => {
+      const result = selectDiverse(
+        [candidate(10, TASTE_ALIGNED, 0.8, 5, 50), candidate(20, ORTHOGONAL, 0.8, 8, 5_000)],
+        { limit: 2 },
+      );
+
+      expect(result.map((pick) => pick.movieId)).toEqual([20, 10]);
+      expect(result[0]?.score).toBeCloseTo(0.83358, 5);
+      expect(result[1]?.score).toBeCloseTo(0.81746, 5);
+    });
+
+    it('keeps a taste-matched film eligible without reception data', () => {
+      const result = selectDiverse(
+        [candidate(1, TASTE_ALIGNED, 0.9), candidate(2, ORTHOGONAL, 0.8, 9.9, 3_000_000)],
+        { limit: 1 },
+      );
+
+      expect(result.map((pick) => pick.movieId)).toEqual([1]);
+      expect(result[0]?.score).toBeCloseTo(0.9, 12);
+    });
+
+    it('applies no tilt when vote fields are null or zero', () => {
+      const [missing] = selectDiverse([candidate(1, TASTE_ALIGNED, 0.7)], { limit: 1 });
+      const [zero] = selectDiverse([candidate(2, TASTE_ALIGNED, 0.7, 0, 0)], { limit: 1 });
+
+      expect(missing?.score).toBe(0.7);
+      expect(zero?.score).toBe(0.7);
+    });
+
+    it('ranks a cold-start pool by rank score plus the tilt, deterministically', () => {
+      // rankAsRelevance assigns 1 - index/pool.length, so a 50-film pool has 0.02 gaps.
+      const pool = [
+        candidate(1, TASTE_ALIGNED, 1),
+        candidate(2, ORTHOGONAL, 0.98, 10, 10_000_000),
+        candidate(3, DIVERSE, 0.96, 5, 10),
+      ];
+
+      const first = selectDiverse(pool, { limit: 2, penalty: 0 });
+      const second = selectDiverse(pool, { limit: 2, penalty: 0 });
+
+      expect(first.map((pick) => pick.movieId)).toEqual([2, 1]);
+      expect(second).toEqual(first);
     });
   });
 

@@ -62,8 +62,8 @@ const FIXTURES: readonly Fixture[] = [
     director: 'Bea Director',
     cast: ['Actor Three'],
     posterPath: '/recommendation-two.jpg',
-    voteAverage: 7.2,
-    voteCount: 800,
+    voteAverage: 6.3,
+    voteCount: 600,
     axis: 1,
   },
   {
@@ -76,8 +76,8 @@ const FIXTURES: readonly Fixture[] = [
     director: 'Cara Director',
     cast: ['Actor Four'],
     posterPath: '/recommendation-three.jpg',
-    voteAverage: 6.3,
-    voteCount: 600,
+    voteAverage: 7.2,
+    voteCount: 800,
     axis: 2,
   },
   {
@@ -120,7 +120,7 @@ function toMovieCard(fixture: Fixture): MovieCard {
   };
 }
 
-const FIXTURE_CARDS = FIXTURES.map(toMovieCard);
+const CARD_BY_ID = new Map(FIXTURES.map((fixture) => [fixture.id, toMovieCard(fixture)]));
 
 const TASTE_VECTOR = axisEmbedding(0);
 
@@ -315,7 +315,10 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
       'coldStart',
     ]);
     expect(body.coldStart).toBe(false);
-    expect(body.movies).toEqual(FIXTURE_CARDS);
+    // Axis one matches taste; the rest tie on similarity, so reception orders three before two.
+    expect(body.movies).toEqual(
+      [AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID, AXIS_FOUR_ID].map((id) => CARD_BY_ID.get(id)),
+    );
   });
 
   it('combines the prompt with the taste vector', async () => {
@@ -625,9 +628,10 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
     const body = await readBody(response);
 
     expect(body.coldStart).toBe(false);
+    // All three tie on similarity, so reception orders three before two.
     expect(body.movies.map((movie) => movie.id)).toEqual([
-      AXIS_TWO_ID,
       AXIS_THREE_ID,
+      AXIS_TWO_ID,
       AXIS_FOUR_ID,
     ]);
   });
@@ -748,6 +752,23 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
 
     expect(body.coldStart).toBe(false);
     expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_THREE_ID, AXIS_ONE_ID, AXIS_TWO_ID]);
+  });
+
+  it('prefers the better-received film when similarity ties, even at a higher id', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: [AXIS_TWO_ID, AXIS_THREE_ID],
+      tasteVector: TASTE_VECTOR,
+      limit: 1,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    // Both have zero similarity to the taste axis; the quality tilt beats id order.
+    expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_THREE_ID]);
   });
 
   it('returns only the movies and coldStart top-level fields', async () => {
