@@ -4,7 +4,7 @@
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration.
-- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on.)
+- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on. Retune the interim quality-tilt weights from the reranker: 0.05 tilt, 0.7/0.3 vote blend, log scale 6.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
 
