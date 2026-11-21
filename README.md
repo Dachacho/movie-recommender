@@ -2,11 +2,11 @@
 
 One good pick, three varied alternatives, no endless scrolling.
 
-A local-first movie recommender built on a 44,258-film catalog. It combines your
+A local-first movie recommender built on a 40,000-film catalog. It combines your
 ratings into a taste vector, searches the catalog by embedding similarity,
 reranks the alternatives for variety, and keeps guest data in the browser.
 
-The backend and catalog are working. The React UI is still a placeholder — see
+The backend, catalog and recommendation screen are working — see
 [Status](#status).
 
 ## Stack
@@ -22,8 +22,8 @@ The backend and catalog are working. The React UI is still a placeholder — see
 
 - Node.js >= 24
 - Docker with Compose (for PostgreSQL/pgvector)
-- About 3 GB of free disk: dataset archive ~230 MB, extracted CSVs ~1.1 GB,
-  MiniLM model ~25 MB, and the imported catalog.
+- About 1.5 GB of free disk: the TMDB snapshot CSV (~810 MB), the MiniLM
+  model (~25 MB), and the imported catalog.
 
 ## Quick start
 
@@ -197,7 +197,7 @@ apps/api/src/
   modules/movies/        Catalog import, parsing, search/detail routes
   modules/taste/         Pure taste-vector math + /taste route
   modules/recommendations/ Candidate query, diversity rerank, engine, route
-apps/web/src/            React placeholder
+apps/web/src/            React recommendation screen
 packages/shared/         Zod request/response contracts
 db/init/                 pgvector extension for Compose
 docs/seed-inspection.md  Verified dataset findings, cleaning rules, license
@@ -205,12 +205,16 @@ docs/seed-inspection.md  Verified dataset findings, cleaning rules, license
 
 ## Data and license
 
-The catalog is a 2017 TMDB snapshot distributed on Kaggle as *The Movies
-Dataset*; see [`docs/seed-inspection.md`](docs/seed-inspection.md) for verified
-counts, defects and cleaning rules.
+The catalog is imported from alanvourch's Kaggle *TMDB daily updates* export
+(2026-11-21 snapshot), curated to the top 40,000 movies by popularity among
+Released films with an overview and a positive runtime; see
+[`docs/catalog-snapshot-2026.md`](docs/catalog-snapshot-2026.md) for verified
+counts, provenance and the curation rule. The original 2017 MovieLens-linked
+seed inspection is preserved in
+[`docs/seed-inspection.md`](docs/seed-inspection.md).
 
-Kaggle labels it CC0, but the content comes from TMDB and GroupLens and cannot be
-relicensed:
+Kaggle labels the exports (CC0 / Apache-2.0), but the content comes from TMDB
+and GroupLens and cannot be relicensed:
 
 - TMDB terms forbid caching beyond six months, dataset collection for ML, and
   commercial use without an agreement; attribution is required.
@@ -219,28 +223,31 @@ relicensed:
 Treat this project as a **personal, non-commercial MVP**. A public or commercial
 launch needs TMDB licensing and GroupLens permission, or a different catalog.
 
-The 26M MovieLens ratings are not imported into the application database. They
-are kept for offline evaluation only. No catalog refresh exists yet, so the
-catalog stops at 2017.
+The MovieLens ratings are not imported into the application database. They are
+kept for offline evaluation only. Importing the full snapshot (~1.3M rows) is
+deferred until productionization.
 
 ## Status
 
 Working: catalog import and verification, movie search/detail, taste vectors,
-pgvector ranking with filters, diversity reranking, cold start, and the HTTP API
-with validation and integration tests.
+pgvector ranking with filters and prompt constraints, diversity reranking, cold
+start, the HTTP API with validation and integration tests, and the
+recommendation screen (main pick, alternatives, optional prompt, poster
+fallbacks).
 
-Next, per [`BACKLOG.md`](BACKLOG.md): the recommendation screen, then IndexedDB
-guest profiles and ratings, Letterboxd import, list mode with cooldowns, and
-evaluation against held-out ratings.
+Next, per [`BACKLOG.md`](BACKLOG.md): IndexedDB guest profiles and ratings,
+Letterboxd import, list mode with cooldowns and replacement, evaluation against
+held-out ratings, and a dashboard/PWA.
 
 Known gaps:
 
-- Web UI is a placeholder; no CORS/proxy yet.
-- No auth, rate limiting or server-side persistence; guest data is designed to
-  live in IndexedDB.
-- Letterboxd links need `imdb_id`, which is not imported yet.
-- The request has no prompt/exploration/filter fields yet.
-- Catalog refresh and incremental re-embedding are not implemented.
+- No auth or server-side persistence; guest data is designed to live in
+  IndexedDB.
+- Letterboxd links are not shown yet.
+- Prompt constraints cover genres, decades and runtime; mood phrases rank by
+  embedding only until the evaluation ticket tunes soft boosts.
+- Imports truncate before embedding; a failed run recovers by re-running.
+- Full-catalog import and incremental re-embedding are not implemented.
 
 ## More docs
 
