@@ -3,6 +3,7 @@
 ## To do
 - [ ] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. Fixes literal matches like "Thriller" (the MJ video) for "sweaty thriller".
 - [ ] Re-import a fresher TMDB snapshot: fixes the ~93% dead poster paths found in sampling and covers post-2017 films; re-clean malformed/duplicate IDs, re-embed the whole catalog with the pinned model, re-verify counts.
+- [ ] For discussion: adopt new-snapshot-only fields — US age rating (certification_us) for card display, IMDb rating/votes for evaluation; needs a schema migration. Also note the new set lacks an adult flag for curation.
 
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
