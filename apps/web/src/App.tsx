@@ -22,21 +22,33 @@ function errorMessage(error: unknown): string {
   return 'Something went wrong while finding a movie. Try again.';
 }
 
+function PosterPlaceholder({ title }: { title: string }) {
+  return (
+    <div
+      className="poster poster--placeholder"
+      role="img"
+      aria-label={`No poster available for ${title}`}
+    >
+      <span aria-hidden="true">No poster</span>
+    </div>
+  );
+}
+
 function MoviePoster({ movie }: { movie: MovieCard }) {
-  if (movie.posterPath === null) {
-    return (
-      <div
-        className="poster poster--placeholder"
-        role="img"
-        aria-label={`No poster available for ${movie.title}`}
-      >
-        <span aria-hidden="true">No poster</span>
-      </div>
-    );
+  const [failedPosterPath, setFailedPosterPath] = useState<string | null>(null);
+  const posterPath = movie.posterPath;
+
+  if (posterPath === null || failedPosterPath === posterPath) {
+    return <PosterPlaceholder title={movie.title} />;
   }
 
   return (
-    <img className="poster" src={posterUrl(movie.posterPath)} alt={`Poster for ${movie.title}`} />
+    <img
+      className="poster"
+      src={posterUrl(posterPath)}
+      alt={`Poster for ${movie.title}`}
+      onError={() => setFailedPosterPath(posterPath)}
+    />
   );
 }
 

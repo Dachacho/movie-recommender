@@ -62,6 +62,19 @@ const PADDINGTON_2: MovieCard = {
   voteAverage: 7.6,
 };
 
+const BROKEN_POSTER: MovieCard = {
+  id: 5,
+  title: 'Broken Poster',
+  releaseYear: 2020,
+  runtime: 100,
+  overview: 'A fixture whose poster image fails to load.',
+  genres: ['Drama'],
+  director: 'Test Director',
+  cast: [],
+  posterPath: '/broken-poster.jpg',
+  voteAverage: 6.5,
+};
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -219,6 +232,22 @@ describe('App', () => {
     expect(
       await screen.findByRole('img', { name: 'No poster available for Paddington 2' }),
     ).toBeTruthy();
+  });
+
+  it('falls back to the placeholder when a poster image fails to load', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [BROKEN_POSTER], coldStart: false }));
+
+    render(<App />);
+    await submitPrompt('');
+
+    fireEvent.error(await screen.findByAltText('Poster for Broken Poster'));
+
+    const placeholder = await screen.findByRole('img', {
+      name: 'No poster available for Broken Poster',
+    });
+    expect(placeholder.classList.contains('poster--placeholder')).toBe(true);
+    expect(screen.queryByAltText('Poster for Broken Poster')).toBeNull();
   });
 
   it('renders the empty state when no movies are returned', async () => {
