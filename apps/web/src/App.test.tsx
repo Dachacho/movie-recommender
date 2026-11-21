@@ -406,6 +406,292 @@ describe('App', () => {
     });
   });
 
+  it('drops the cached taste vector once ratings are removed', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+
+    renderApp(profile);
+    await submitPrompt('');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByRole('button', { name: 'Find my movie' });
+
+    await profile.removeRating(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+    const tasteCalls = fetchMock.mock.calls.filter(([input]) => input === '/api/taste');
+    expect(tasteCalls).toHaveLength(1);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 2)).toEqual({ source: 'catalog', limit: 4 });
+  });
+
+  it('searches only after the library search is submitted', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+
+    renderApp();
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByRole('heading', { name: 'Heat' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/movies/search?q=heat');
+  });
+
+  it('does not send a library search shorter than two characters', async () => {
+    const fetchMock = stubFetch();
+
+    renderApp();
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'a' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(
+      await screen.findByText('Enter a search term between 2 and 80 characters.'),
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows the search error and leaves the search usable', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: { code: 'invalid_request', message: 'Search is unavailable.' } }, 400),
+    );
+
+    renderApp();
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('Search is unavailable.')).toBeTruthy();
+
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+    expect((searchButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('reflects stored library state in matching search results', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(3, 4.5);
+    await profile.setWatched(3);
+    await profile.addToWatchlist(3);
+    fetchMock.mockImplementation(async (input) =>
+      typeof input === 'string' && input.startsWith('/api/movies/search')
+        ? jsonResponse({ movies: [HEAT] })
+        : recommendationResponse(),
+    );
+
+    renderApp(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const ratingGroup = await screen.findByRole('radiogroup', { name: 'Rating for Heat' });
+    expect(screen.getByText('1995')).toBeTruthy();
+    const fourAndAHalfStars = within(ratingGroup).getByRole('radio', {
+      name: '4.5 stars out of 5',
+    });
+    await waitFor(() => expect((fourAndAHalfStars as HTMLInputElement).checked).toBe(true));
+
+    expect(screen.getByRole('button', { name: 'Heat: watched' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Heat: watchlist' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('writes watched and watchlist toggles through the profile', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockImplementation(async (input) =>
+      typeof input === 'string' && input.startsWith('/api/movies/search')
+        ? jsonResponse({ movies: [HEAT] })
+        : recommendationResponse(),
+    );
+
+    renderApp(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const watchedButton = await screen.findByRole('button', { name: 'Heat: watched' });
+    expect(watchedButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(watchedButton);
+    await waitFor(() => expect(watchedButton.getAttribute('aria-pressed')).toBe('true'));
+    await expect(profile.getWatchedIds()).resolves.toEqual([3]);
+
+    fireEvent.click(watchedButton);
+    await waitFor(() => expect(watchedButton.getAttribute('aria-pressed')).toBe('false'));
+    await expect(profile.getWatchedIds()).resolves.toEqual([]);
+
+    const watchlistButton = screen.getByRole('button', { name: 'Heat: watchlist' });
+    expect(watchlistButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(watchlistButton);
+    await waitFor(() => expect(watchlistButton.getAttribute('aria-pressed')).toBe('true'));
+    await expect(profile.getWatchlistIds()).resolves.toEqual([3]);
+
+    fireEvent.click(watchlistButton);
+    await waitFor(() => expect(watchlistButton.getAttribute('aria-pressed')).toBe('false'));
+    await expect(profile.getWatchlistIds()).resolves.toEqual([]);
+  });
+
+  it('invalidates the cached taste vector when a rating is written through the library', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+    fetchMock.mockImplementation(async (input) => {
+      if (input === '/api/taste') {
+        return jsonResponse({ tasteVector: TASTE_VECTOR });
+      }
+
+      if (typeof input === 'string' && input.startsWith('/api/movies/search')) {
+        return jsonResponse({ movies: [HEAT] });
+      }
+
+      return recommendationResponse();
+    });
+
+    renderApp(profile);
+    await submitPrompt('');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByRole('button', { name: 'Find my movie' });
+
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const ratingGroup = await screen.findByRole('radiogroup', { name: 'Rating for Heat' });
+    const threeStars = within(ratingGroup).getByRole('radio', { name: '3 stars out of 5' });
+    fireEvent.click(threeStars);
+    await waitFor(() => expect((threeStars as HTMLInputElement).checked).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+
+    const tasteCalls = fetchMock.mock.calls.filter(([input]) => input === '/api/taste');
+    expect(tasteCalls).toHaveLength(2);
+    expect(submittedBody(fetchMock, 3)).toEqual({
+      ratings: [
+        { movieId: 1, rating: 4 },
+        { movieId: 3, rating: 3 },
+      ],
+    });
+    expect(submittedBody(fetchMock, 4)).toMatchObject({ tasteVector: TASTE_VECTOR });
+  });
+
+  it('shows the library load error and keeps search usable when the profile cannot be read', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+    vi.spyOn(profile, 'getRatings').mockRejectedValue(new Error('IndexedDB unavailable'));
+
+    renderApp(profile);
+
+    expect(await screen.findByText('Could not load your library. Try again.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByRole('heading', { name: 'Heat' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/movies/search?q=heat');
+  });
+
+  it('shows the write error and keeps the previous rating when saving a rating fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(3, 4);
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+
+    renderApp(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const ratingGroup = await screen.findByRole('radiogroup', { name: 'Rating for Heat' });
+    const fourStars = within(ratingGroup).getByRole('radio', { name: '4 stars out of 5' });
+    await waitFor(() => expect((fourStars as HTMLInputElement).checked).toBe(true));
+
+    vi.spyOn(profile, 'setRating').mockRejectedValue(new Error('Quota exceeded'));
+
+    const oneStar = within(ratingGroup).getByRole('radio', { name: '1 star out of 5' });
+    fireEvent.click(oneStar);
+
+    expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
+    expect((oneStar as HTMLInputElement).checked).toBe(false);
+    expect((fourStars as HTMLInputElement).checked).toBe(true);
+    await expect(profile.ratingsPayload()).resolves.toEqual([{ movieId: 3, rating: 4 }]);
+  });
+
+  it('shows the write error and keeps the watched toggle off when saving fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+    vi.spyOn(profile, 'setWatched').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderApp(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const watchedButton = await screen.findByRole('button', { name: 'Heat: watched' });
+    expect(watchedButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(watchedButton);
+
+    expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
+    expect(watchedButton.getAttribute('aria-pressed')).toBe('false');
+    await expect(profile.getWatchedIds()).resolves.toEqual([]);
+  });
+
+  it('shows the write error and keeps the watchlist toggle off when saving fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+    vi.spyOn(profile, 'addToWatchlist').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderApp(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const watchlistButton = await screen.findByRole('button', { name: 'Heat: watchlist' });
+    expect(watchlistButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(watchlistButton);
+
+    expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
+    expect(watchlistButton.getAttribute('aria-pressed')).toBe('false');
+    await expect(profile.getWatchlistIds()).resolves.toEqual([]);
+  });
+
   it('shows the taste error without requesting recommendations', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();

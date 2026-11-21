@@ -141,8 +141,10 @@ export class GuestProfile {
   }
 
   /**
-   * Shaped for `tasteRequestSchema`: unique ids, sorted by movieId, and capped
-   * at the endpoint's 500-rating limit.
+   * Shaped for `tasteRequestSchema`: unique ids sorted by movieId, capped at
+   * the endpoint's 500-rating limit. When there are more, the most recently
+   * updated ratings win (ties broken by movieId) so recent taste changes are
+   * the ones that reach the API.
    */
   async ratingsPayload(): Promise<RatingsPayload> {
     const latestById = new Map<number, RatingRecord>();
@@ -156,8 +158,9 @@ export class GuestProfile {
     }
 
     return [...latestById.values()]
-      .sort((left, right) => left.movieId - right.movieId)
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.movieId - right.movieId)
       .slice(0, MAX_TASTE_RATINGS)
+      .sort((left, right) => left.movieId - right.movieId)
       .map(({ movieId, rating }) => ({ movieId, rating }));
   }
 

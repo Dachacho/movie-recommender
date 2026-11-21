@@ -5,6 +5,7 @@ import {
   RecommendationNetworkError,
   fetchRecommendations,
   fetchTasteVector,
+  searchMovies,
 } from './api';
 
 afterEach(() => {
@@ -187,5 +188,72 @@ describe('fetchTasteVector', () => {
     await expect(fetchTasteVector([{ movieId: 7, rating: 4 }])).rejects.toBeInstanceOf(
       RecommendationNetworkError,
     );
+  });
+});
+
+describe('searchMovies', () => {
+  it('requests the trimmed query and returns the parsed movie list', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [MOVIE] }));
+
+    const result = await searchMovies('  arrival  ');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/movies/search?q=arrival');
+    expect(fetchMock.mock.calls[0]?.[1]).toBeUndefined();
+    expect(result).toEqual([MOVIE]);
+  });
+
+  it('encodes a query with spaces', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [] }));
+
+    await searchMovies('paddington 2');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/movies/search?q=paddington+2');
+  });
+
+  it.each(['', ' a ', 'x'.repeat(81)])(
+    'rejects an out-of-range query without calling fetch: %j',
+    async (query) => {
+      const fetchMock = stubFetch();
+
+      await expect(searchMovies(query)).rejects.toMatchObject({
+        name: 'RecommendationApiError',
+        code: 'invalid_query',
+        message: 'Enter a search term between 2 and 80 characters.',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects with the API error code and message for a non-2xx response', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: { code: 'invalid_request', message: 'Invalid search query.' } }, 400),
+    );
+
+    await expect(searchMovies('arrival')).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_request',
+      message: 'Invalid search query.',
+    });
+  });
+
+  it('rejects an unexpected success payload instead of returning it', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [{ title: 'Not a movie card' }] }));
+
+    await expect(searchMovies('arrival')).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_response',
+      message: 'The movie search returned an unexpected response. Try again.',
+    });
+  });
+
+  it('rejects with a network error when fetch fails', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(searchMovies('arrival')).rejects.toBeInstanceOf(RecommendationNetworkError);
   });
 });

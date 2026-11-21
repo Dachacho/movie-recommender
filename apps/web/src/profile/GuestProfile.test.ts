@@ -145,7 +145,7 @@ describe('GuestProfile', () => {
     await expect(profile.ratingsPayload()).resolves.toEqual([{ movieId: 2, rating: 3.5 }]);
   });
 
-  it('limits the payload to the 500 entries allowed by the taste API', async () => {
+  it('limits the payload to 500 entries, breaking updatedAt ties by movieId', async () => {
     const { profile, storage } = setup();
     const rows = Array.from({ length: 501 }, (_value, index) => ({
       movieId: index + 1,
@@ -161,6 +161,23 @@ describe('GuestProfile', () => {
     expect(payload[0]).toEqual({ movieId: 1, rating: 4 });
     expect(payload[499]).toEqual({ movieId: 500, rating: 4 });
     expect(tasteRequestSchema.safeParse({ ratings: payload }).success).toBe(true);
+  });
+
+  it('keeps the 500 most recently updated ratings, then sorts them by movieId', async () => {
+    const { profile, storage } = setup();
+    const rows = Array.from({ length: 501 }, (_value, index) => ({
+      movieId: index + 1,
+      rating: 4,
+      updatedAt: index,
+    }));
+
+    storage.seedRatings(rows);
+
+    const payload = await profile.ratingsPayload();
+
+    expect(payload).toHaveLength(500);
+    expect(payload[0]).toEqual({ movieId: 2, rating: 4 });
+    expect(payload[499]).toEqual({ movieId: 501, rating: 4 });
   });
 
   it('bumps its version on every write and keeps it stable on reads', async () => {

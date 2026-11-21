@@ -1,7 +1,10 @@
 import {
   apiErrorSchema,
+  movieListResponseSchema,
+  movieSearchQuerySchema,
   recommendationResponseSchema,
   tasteResponseSchema,
+  type MovieCard,
   type RecommendationRequest,
   type RecommendationResponse,
   type TasteRequest,
@@ -17,6 +20,9 @@ const INVALID_RESPONSE_MESSAGE =
   'The recommendation service returned an unexpected response. Try again.';
 const INVALID_TASTE_RESPONSE_MESSAGE =
   'The taste service returned an unexpected response. Try again.';
+const INVALID_SEARCH_QUERY_MESSAGE = 'Enter a search term between 2 and 80 characters.';
+const INVALID_SEARCH_RESPONSE_MESSAGE =
+  'The movie search returned an unexpected response. Try again.';
 
 export class RecommendationApiError extends Error {
   readonly code: string;
@@ -83,6 +89,38 @@ export async function fetchTasteVector(ratings: TasteRequest['ratings']): Promis
   }
 
   return parsed.data.tasteVector;
+}
+
+export async function searchMovies(query: string): Promise<MovieCard[]> {
+  const parsedQuery = movieSearchQuerySchema.safeParse({ q: query });
+
+  if (!parsedQuery.success) {
+    throw new RecommendationApiError('invalid_query', INVALID_SEARCH_QUERY_MESSAGE);
+  }
+
+  const params = new URLSearchParams({ q: parsedQuery.data.q });
+
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/movies/search?${params.toString()}`);
+  } catch {
+    throw new RecommendationNetworkError();
+  }
+
+  const payload = await readJson(response);
+
+  if (!response.ok) {
+    throw apiErrorFromPayload(payload, 'unknown_error');
+  }
+
+  const parsed = movieListResponseSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new RecommendationApiError('invalid_response', INVALID_SEARCH_RESPONSE_MESSAGE);
+  }
+
+  return parsed.data.movies;
 }
 
 export async function fetchRecommendations(

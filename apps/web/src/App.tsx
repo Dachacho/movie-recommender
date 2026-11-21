@@ -7,6 +7,7 @@ import {
   fetchTasteVector,
   type TasteVector,
 } from './api';
+import { Library } from './Library';
 import { createGuestProfile, type GuestProfile, type RatingsPayload } from './profile/GuestProfile';
 import { buildRecommendationInput } from './recommendationInput';
 
@@ -219,6 +220,8 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             </div>
           ))}
       </section>
+
+      <Library profile={profile} />
     </main>
   );
 }
