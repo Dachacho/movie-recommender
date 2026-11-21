@@ -4,12 +4,13 @@ export const DEFAULT_DIVERSITY_PENALTY = 0.3;
 export const MAX_RECOMMENDATIONS = 4;
 
 /**
- * Interim, product-approved strength of the reception tilt. Cosine similarity
- * remains the primary sort: the maximum possible tilt (0.05) is smaller than a
- * meaningful taste gap, so it only breaks near-ties. Retune against held-out
- * evaluation evidence before changing it.
+ * Interim, product-approved strength of the reception tilt. Within the
+ * similarity-retrieved pool this is meaningfully reception-steered: candidates
+ * within 0.12 cosine similarity can be reordered by reception, though taste
+ * still selects the pool and larger similarity gaps still win. Retune against
+ * held-out evaluation evidence before changing it.
  */
-export const QUALITY_TILT_WEIGHT = 0.05;
+export const QUALITY_TILT_WEIGHT = 0.12;
 
 /**
  * Divisor that scales the log vote count. log10(1 + 10M) = 7.0, so a ~10M-vote
@@ -18,17 +19,18 @@ export const QUALITY_TILT_WEIGHT = 0.05;
  */
 export const LOG_VOTE_SCALE = 6;
 
-const VOTE_COUNT_WEIGHT = 0.7;
-const VOTE_AVERAGE_WEIGHT = 0.3;
+const VOTE_COUNT_WEIGHT = 0.3;
+const VOTE_AVERAGE_WEIGHT = 0.7;
 
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
 /**
- * Pure reception score in [0, 1]: 0.7 * log-scaled vote count plus 0.3 * the
- * vote average on a ten-point scale. Null fields contribute 0, and inputs are
- * clamped so malformed data cannot amplify the tilt.
+ * Pure reception score in [0, 1]: 0.3 * log-scaled vote count plus 0.7 * the
+ * vote average on a ten-point scale, so the rating is the dominant signal while
+ * vote count still separates thinly rated films. Null fields contribute 0, and
+ * inputs are clamped so malformed data cannot amplify the tilt.
  */
 export function qualityScore(voteAverage: number | null, voteCount: number | null): number {
   const votes =

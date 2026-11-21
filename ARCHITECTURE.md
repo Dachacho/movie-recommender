@@ -44,7 +44,7 @@ Guest ratings, watched IDs, watchlist, cooldowns, taste and history live in Inde
 3. Filter eligible catalog by source, watched IDs, cooldowns and hard constraints before ranking. Use cosine similarity via pgvector. Exact search is sufficient for the initial catalog; benchmark before adding ANN indexes.
 4. Select best candidate, then rerank alternatives for diversity using a simple similarity penalty. Exploration relaxes taste ranking, never hard filters. Do not gate by community rating.
 5. Return up to four real movies. Single replacement excludes the other visible picks and the rejected pick; full refresh excludes all replaced picks. Persist cooldowns for seven days. Recalculate taste after rating changes.
-6. A small reception tilt (similarity + 0.05 * qualityScore of log-scaled vote count and vote average) breaks near-ties toward better-received films. It is an interim, product-approved value, never an eligibility gate, and must be retuned against held-out evaluation evidence.
+6. A reception tilt breaks ties toward better-received films: relevance = similarity + 0.12 * (0.7 * vote-average/10 + 0.3 * log-scaled vote count). Within the similarity-retrieved pool this is meaningfully reception-steered: candidates within ~0.12 cosine similarity can be reordered by reception, though taste still selects the pool and larger gaps still win. It is an interim, product-approved value, never an eligibility gate, and must be retuned against held-out evaluation evidence.
 
 Evaluate with deterministic unit tests and held-out ratings; tune weights only after inspecting actual results. A single centroid may dilute distinct tastes; clustering is explicitly deferred.
 

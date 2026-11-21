@@ -37,21 +37,28 @@ describe('qualityScore', () => {
     expect(qualityScore(10, 10_000_000)).toBeCloseTo(1, 12);
   });
 
-  it('gives a ~100-vote film about a third of the vote weight', () => {
-    // log10(101) / 6 = 0.334; 0.7 * 0.334 + 0.3 * 0.3 = 0.534.
-    expect(qualityScore(10, 100)).toBeCloseTo(0.53384, 5);
-    expect(qualityScore(null, 100)).toBeCloseTo(0.23384, 5);
+  it('gives a ~100-vote film a tenth of the score while the average dominates', () => {
+    // log10(101) / 6 = 0.334; 0.3 * 0.334 + 0.7 * 1.0 = 0.800.
+    expect(qualityScore(10, 100)).toBeCloseTo(0.80022, 5);
+    expect(qualityScore(null, 100)).toBeCloseTo(0.10022, 5);
   });
 
-  it('blends votes and average with fixed 0.7 / 0.3 weights', () => {
-    // log10(5001) / 6 = 0.617 -> 0.7 * 0.617 + 0.3 * 0.8 = 0.672.
-    expect(qualityScore(8, 5_000)).toBeCloseTo(0.67156, 5);
-    expect(qualityScore(10, null)).toBe(0.3);
+  it('blends votes and average with fixed 0.3 / 0.7 weights', () => {
+    // log10(5001) / 6 = 0.617 -> 0.3 * 0.617 + 0.7 * 0.8 = 0.745.
+    expect(qualityScore(8, 5_000)).toBeCloseTo(0.74495, 5);
+    expect(qualityScore(10, null)).toBe(0.7);
   });
 
   it('increases with votes and with the average', () => {
     expect(qualityScore(7, 10_000)).toBeGreaterThan(qualityScore(7, 100));
     expect(qualityScore(8, 1_000)).toBeGreaterThan(qualityScore(5, 1_000));
+  });
+
+  it('still gives thin-data high averages a notable, accepted tilt', () => {
+    // 7.8 average on only 5 votes: log10(6) / 6 = 0.129 -> 0.3 * 0.129 +
+    // 0.7 * 0.78 = 0.585; tilt = 0.12 * 0.585 = 0.070. Enough to reverse a
+    // 0.07 similarity lead — accepted interim behavior pending evaluation.
+    expect(qualityScore(7.8, 5)).toBeCloseTo(0.58491, 5);
   });
 
   it('clamps out-of-range data to the 0..1 range', () => {
@@ -145,13 +152,14 @@ describe('selectDiverse', () => {
 
   describe('quality tilt', () => {
     it('keeps a clear taste match ahead of a more popular, poorly matched film', () => {
+      // The 0.15 similarity gap exceeds the maximum possible 0.12 reception swing.
       const result = selectDiverse(
-        [candidate(1, TASTE_ALIGNED, 0.9, 5, 10), candidate(2, ORTHOGONAL, 0.8, 9.5, 2_000_000)],
+        [candidate(1, TASTE_ALIGNED, 0.95, 5, 10), candidate(2, ORTHOGONAL, 0.8, 9.5, 2_000_000)],
         { limit: 1 },
       );
 
       expect(result.map((pick) => pick.movieId)).toEqual([1]);
-      expect(result[0]?.score).toBeCloseTo(0.91357, 5);
+      expect(result[0]?.score).toBeCloseTo(0.99825, 5);
     });
 
     it('tie-breaks comparable taste matches toward the better-received film', () => {
@@ -161,18 +169,19 @@ describe('selectDiverse', () => {
       );
 
       expect(result.map((pick) => pick.movieId)).toEqual([20, 10]);
-      expect(result[0]?.score).toBeCloseTo(0.83358, 5);
-      expect(result[1]?.score).toBeCloseTo(0.81746, 5);
+      expect(result[0]?.score).toBeCloseTo(0.88939, 5);
+      expect(result[1]?.score).toBeCloseTo(0.85225, 5);
     });
 
     it('keeps a taste-matched film eligible without reception data', () => {
+      // A near-max reception film is 0.12 behind at most, inside this 0.15 gap.
       const result = selectDiverse(
-        [candidate(1, TASTE_ALIGNED, 0.9), candidate(2, ORTHOGONAL, 0.8, 9.9, 3_000_000)],
+        [candidate(1, TASTE_ALIGNED, 0.95), candidate(2, ORTHOGONAL, 0.8, 9.9, 3_000_000)],
         { limit: 1 },
       );
 
       expect(result.map((pick) => pick.movieId)).toEqual([1]);
-      expect(result[0]?.score).toBeCloseTo(0.9, 12);
+      expect(result[0]?.score).toBe(0.95);
     });
 
     it('applies no tilt when vote fields are null or zero', () => {
@@ -184,7 +193,8 @@ describe('selectDiverse', () => {
     });
 
     it('ranks a cold-start pool by rank score plus the tilt, deterministically', () => {
-      // rankAsRelevance assigns 1 - index/pool.length, so a 50-film pool has 0.02 gaps.
+      // rankAsRelevance assigns 1 - index/pool.length, so a 50-film pool has 0.02 gaps;
+      // a 0.12 tilt can therefore lift a film by up to six pool ranks.
       const pool = [
         candidate(1, TASTE_ALIGNED, 1),
         candidate(2, ORTHOGONAL, 0.98, 10, 10_000_000),
@@ -194,7 +204,7 @@ describe('selectDiverse', () => {
       const first = selectDiverse(pool, { limit: 2, penalty: 0 });
       const second = selectDiverse(pool, { limit: 2, penalty: 0 });
 
-      expect(first.map((pick) => pick.movieId)).toEqual([2, 1]);
+      expect(first.map((pick) => pick.movieId)).toEqual([2, 3]);
       expect(second).toEqual(first);
     });
   });
