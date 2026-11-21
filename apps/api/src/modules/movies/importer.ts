@@ -1,124 +1,29 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../../db/client.js';
 import type { NewMovie } from '../../db/schema.js';
 import { movies } from '../../db/schema.js';
-import { parseCsv } from './csv.js';
 import { EMBEDDING_VERSION, type Embedder } from './embed.js';
-import {
-  buildEmbeddingText,
-  dedupeById,
-  parseCredits,
-  parseNamedList,
-  toNewMovie,
-  type Credits,
-} from './parse.js';
 
-const CAST_LIMIT = 8;
-
-function* objectRows(text: string, required: readonly string[]): Generator<Record<string, string>> {
-  const parser = parseCsv(text);
-  const headerRow = parser.next();
-
-  if (headerRow.done === true) {
-    throw new Error('CSV is empty');
-  }
-
-  const header = headerRow.value;
-  const missing = required.filter((column) => !header.includes(column));
-
-  if (missing.length > 0) {
-    throw new Error(`CSV is missing required columns: ${missing.join(', ')}`);
-  }
-
-  for (const row of parser) {
-    const object: Record<string, string> = {};
-
-    header.forEach((column, index) => {
-      object[column] = row[index] ?? '';
-    });
-
-    yield object;
-  }
+export interface EmbeddingInput {
+  title: string;
+  overview: string | null;
+  tagline: string | null;
+  genres: string[];
+  keywords: string[];
 }
 
-const MOVIE_COLUMNS = [
-  'id',
-  'title',
-  'overview',
-  'tagline',
-  'release_date',
-  'runtime',
-  'genres',
-  'poster_path',
-  'popularity',
-  'vote_average',
-  'vote_count',
-  'status',
-  'adult',
-] as const;
-const CREDIT_COLUMNS = ['id', 'cast', 'crew'] as const;
-const KEYWORD_COLUMNS = ['id', 'keywords'] as const;
+export function buildEmbeddingText(movie: EmbeddingInput): string | null {
+  const parts = [
+    movie.title,
+    movie.overview ?? '',
+    movie.tagline ?? '',
+    ...movie.genres,
+    ...movie.keywords,
+  ]
+    .map((part) => part.trim().replace(/\.+$/, ''))
+    .filter((part) => part.length > 0);
 
-export function prepareMovies(
-  moviesCsv: string,
-  creditsCsv: string,
-  keywordsCsv: string,
-  limit?: number,
-): NewMovie[] {
-  const creditsById = new Map<string, Credits>();
-
-  if (creditsCsv.length > 0) {
-    for (const row of objectRows(creditsCsv, CREDIT_COLUMNS)) {
-      const id = (row['id'] ?? '').trim();
-
-      if (id.length > 0) {
-        creditsById.set(id, parseCredits(row['cast'] ?? '', row['crew'] ?? '', CAST_LIMIT));
-      }
-    }
-  }
-
-  const keywordsById = new Map<string, string[]>();
-
-  if (keywordsCsv.length > 0) {
-    for (const row of objectRows(keywordsCsv, KEYWORD_COLUMNS)) {
-      const id = (row['id'] ?? '').trim();
-
-      if (id.length > 0) {
-        keywordsById.set(id, parseNamedList(row['keywords'] ?? ''));
-      }
-    }
-  }
-
-  const prepared: NewMovie[] = [];
-
-  for (const row of objectRows(moviesCsv, MOVIE_COLUMNS)) {
-    const id = (row['id'] ?? '').trim();
-    const movie = toNewMovie(row, creditsById.get(id), keywordsById.get(id) ?? []);
-
-    if (movie !== null) {
-      prepared.push(movie);
-    }
-  }
-
-  const unique = dedupeById(prepared);
-
-  return limit === undefined ? unique : unique.slice(0, limit);
-}
-
-export async function readSourceFiles(dataDir: string): Promise<{
-  moviesCsv: string;
-  creditsCsv: string;
-  keywordsCsv: string;
-}> {
-  const [moviesCsv, creditsCsv, keywordsCsv] = await Promise.all([
-    readFile(join(dataDir, 'movies_metadata.csv'), 'utf8'),
-    readFile(join(dataDir, 'credits.csv'), 'utf8'),
-    readFile(join(dataDir, 'keywords.csv'), 'utf8'),
-  ]);
-
-  return { moviesCsv, creditsCsv, keywordsCsv };
+  return parts.length > 1 ? parts.join('. ') : null;
 }
 
 export interface ImportMoviesOptions {

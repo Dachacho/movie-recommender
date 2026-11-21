@@ -40,26 +40,20 @@ too early, wait for `docker compose ps` to show `healthy` and run it again.
 ### 1. Import the catalog
 
 Download the Kaggle dataset
-[`rounakbanik/the-movies-dataset`](https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset)
-and extract it. You only need `movies_metadata.csv`, `credits.csv` and
-`keywords.csv`.
+[`alanvourch/tmdb-movies-daily-updates`](https://www.kaggle.com/datasets/alanvourch/tmdb-movies-daily-updates)
+(`TMDB_all_movies.csv`) and set `SNAPSHOT_CSV` to its path.
 
 ```sh
-npm run catalog:import -- --data-dir /path/to/extracted
-npm run catalog:verify
+SNAPSHOT_CSV=/path/to/TMDB_all_movies.csv npm run catalog:import-snapshot
 ```
 
 The first import downloads the pinned `all-MiniLM-L6-v2` int8 model (~25 MB) to
-`apps/api/.cache/transformers`. A full run embeds 44,258 films and takes roughly
-30 minutes on CPU. For a smaller development catalog:
-
-```sh
-npm run catalog:import -- --data-dir /path/to/extracted --limit 2000
-```
-
-`catalog:verify` reports the total rows, embedded rows, wrong-dimension vectors
-and rows without a release year. Imports are idempotent: re-running them upserts
-on the TMDB id.
+`apps/api/.cache/transformers`, then curates the top 40,000 movies by
+popularity among Released films with an overview and a positive runtime, and
+embeds them. A full run takes roughly 25 minutes on CPU. The catalog size is
+fixed at 40,000 rows; imports are idempotent and verify counts, unique ids,
+embedding dimensions and versions after insert. See
+`docs/catalog-snapshot-2026.md` for provenance and curation details.
 
 ### 2. Run it
 
@@ -73,9 +67,8 @@ curl -s http://localhost:3000/health
 # {"status":"ok"}
 ```
 
-The web app does not call the API yet and there is no CORS or Vite proxy
-configured, so browser requests from `:5173` will be blocked until the UI ticket
-wires that up.
+The web app calls the API through the Vite dev proxy (`/api` → port 3000), so no
+CORS configuration is needed.
 
 ## Commands
 
@@ -92,8 +85,7 @@ Run these from the repository root.
 | `npm test` | All workspace tests |
 | `npm run db:up` / `db:down` | Start / stop PostgreSQL |
 | `npm run db:migrate` | Apply Drizzle migrations |
-| `npm run catalog:import -- --data-dir … [--limit N]` | Import or refresh the catalog |
-| `npm run catalog:verify` | Print catalog health |
+| `SNAPSHOT_CSV=… npm run catalog:import-snapshot` | Import or refresh the catalog (fixed 40,000 rows) |
 
 Database tests skip unless `DATABASE_URL` is set. To run the whole suite against
 the real database:

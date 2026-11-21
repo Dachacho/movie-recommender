@@ -9,9 +9,7 @@
     "start": "node --env-file-if-exists=../../.env --import tsx src/server.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "catalog:import": "node --env-file-if-exists=../../.env --import tsx src/modules/movies/seed.ts",
     "catalog:import-snapshot": "node --env-file-if-exists=../../.env --import tsx src/modules/movies/snapshot-import.ts",
-    "catalog:verify": "node --env-file-if-exists=../../.env --import tsx src/modules/movies/seed.ts --verify",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
