@@ -1,12 +1,13 @@
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import { and, gte, lte } from 'drizzle-orm';
-import express from 'express';
+import express, { type ErrorRequestHandler } from 'express';
 import type { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MovieCard } from '@movie-recommender/shared';
 import { createDatabase, type Database } from '../../db/client.js';
 import { movies } from '../../db/schema.js';
+import type { Embedder } from '../movies/embed.js';
 import { createRecommendationRoutes } from './routes.js';
 
 const FIXTURE_MIN_ID = 991_400_001;
@@ -123,6 +124,22 @@ const FIXTURE_CARDS = FIXTURES.map(toMovieCard);
 
 const TASTE_VECTOR = axisEmbedding(0);
 
+const PROMPT_TEXT = 'a quiet science fiction film about loneliness';
+const PROMPT_AXIS = 1;
+
+let embedderCalls: string[][] = [];
+let lazyEmbedderCreations = 0;
+const lazyEmbedderCalls: string[][] = [];
+let limitedEmbedderCalls = 0;
+let retryEmbedderCreations = 0;
+let failNextEmbedderLoad = true;
+
+const fakeEmbedder: Embedder = async (texts) => {
+  embedderCalls.push([...texts]);
+
+  return texts.map(() => axisEmbedding(PROMPT_AXIS));
+};
+
 interface RecommendationBody {
   movies: MovieCard[];
   coldStart: boolean;
@@ -162,6 +179,13 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
     return (await response.json()) as ErrorBody;
   }
 
+  beforeEach(() => {
+    embedderCalls = [];
+    limitedEmbedderCalls = 0;
+    retryEmbedderCreations = 0;
+    failNextEmbedderLoad = true;
+  });
+
   beforeAll(async () => {
     ({ db, pool } = createDatabase(process.env.DATABASE_URL));
 
@@ -186,7 +210,59 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/recommendations', createRecommendationRoutes(db));
+    app.use(
+      '/recommendations',
+      createRecommendationRoutes(db, { createEmbedder: async () => fakeEmbedder }),
+    );
+    app.use(
+      '/lazy-recommendations',
+      createRecommendationRoutes(db, {
+        createEmbedder: async () => {
+          lazyEmbedderCreations += 1;
+
+          return async (texts) => {
+            lazyEmbedderCalls.push([...texts]);
+
+            return texts.map(() => axisEmbedding(PROMPT_AXIS));
+          };
+        },
+      }),
+    );
+    app.use(
+      '/limited-recommendations',
+      createRecommendationRoutes(db, {
+        rateLimit: { limit: 2, windowMs: 50 },
+        createEmbedder: async () => {
+          return async (texts) => {
+            limitedEmbedderCalls += 1;
+
+            return texts.map(() => axisEmbedding(PROMPT_AXIS));
+          };
+        },
+      }),
+    );
+    app.use(
+      '/retry-recommendations',
+      createRecommendationRoutes(db, {
+        createEmbedder: async () => {
+          retryEmbedderCreations += 1;
+
+          if (failNextEmbedderLoad) {
+            failNextEmbedderLoad = false;
+            throw new Error('Embedder load failed.');
+          }
+
+          return async (texts) => texts.map(() => axisEmbedding(PROMPT_AXIS));
+        },
+      }),
+    );
+
+    const errorHandler: ErrorRequestHandler = (_error, _request, response, _next) => {
+      response.status(500).json({
+        error: { code: 'internal_error', message: 'Internal server error.' },
+      });
+    };
+    app.use(errorHandler);
 
     server = app.listen(0);
     await once(server, 'listening');
@@ -240,6 +316,198 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
     ]);
     expect(body.coldStart).toBe(false);
     expect(body.movies).toEqual(FIXTURE_CARDS);
+  });
+
+  it('combines the prompt with the taste vector', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      tasteVector: TASTE_VECTOR,
+      prompt: `  ${PROMPT_TEXT}  `,
+      limit: 4,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    // Equal weighting points between both axes, so axis one and two tie and id order breaks it.
+    expect(body.movies.map((movie) => movie.id)).toEqual([
+      AXIS_ONE_ID,
+      AXIS_TWO_ID,
+      AXIS_THREE_ID,
+      AXIS_FOUR_ID,
+    ]);
+    expect(embedderCalls).toEqual([[PROMPT_TEXT]]);
+  });
+
+  it('ranks by the prompt alone when no taste vector is sent', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      prompt: PROMPT_TEXT,
+      limit: 1,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_TWO_ID]);
+    expect(embedderCalls).toEqual([[PROMPT_TEXT]]);
+  });
+
+  it.each([
+    ['omitted', {}],
+    ['null', { prompt: null }],
+  ])('does not load the embedder when the prompt is %s', async (_label, extra) => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      limit: 2,
+      ...extra,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(true);
+    expect(embedderCalls).toEqual([]);
+  });
+
+  it.each([
+    ['an empty prompt', ''],
+    ['a whitespace-only prompt', '   '],
+    ['a prompt longer than the limit', 'a'.repeat(301)],
+  ])('returns 400 for %s', async (_label, prompt) => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      prompt,
+      limit: 1,
+    });
+
+    expect(response.status).toBe(400);
+
+    const errorBody = await readError(response);
+
+    expect(errorBody.error.code).toBe('invalid_request');
+    expect(errorBody.error.message).toEqual(expect.any(String));
+    expect(errorBody.error.details).toBeDefined();
+    expect(embedderCalls).toEqual([]);
+  });
+
+  it('creates the embedder lazily and reuses it for later prompts', async () => {
+    expect(lazyEmbedderCreations).toBe(0);
+
+    const body = JSON.stringify({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      prompt: PROMPT_TEXT,
+      limit: 1,
+    });
+
+    const first = await fetch(`${baseUrl}/lazy-recommendations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+
+    expect(first.status).toBe(200);
+    expect(lazyEmbedderCreations).toBe(1);
+
+    const firstBody = await readBody(first);
+
+    expect(firstBody.movies.map((movie) => movie.id)).toEqual([AXIS_TWO_ID]);
+
+    const second = await fetch(`${baseUrl}/lazy-recommendations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+
+    expect(second.status).toBe(200);
+    expect(lazyEmbedderCreations).toBe(1);
+    expect(lazyEmbedderCalls).toEqual([[PROMPT_TEXT], [PROMPT_TEXT]]);
+  });
+
+  it('rate limits requests per client IP without loading the embedder for over-limit calls', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+
+    try {
+      const body = JSON.stringify({
+        source: 'list',
+        candidateIds: FIXTURE_IDS,
+        prompt: PROMPT_TEXT,
+        limit: 1,
+      });
+      const postLimited = (): Promise<Response> =>
+        fetch(`${baseUrl}/limited-recommendations`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        });
+
+      const first = await postLimited();
+      expect(first.status).toBe(200);
+
+      const second = await postLimited();
+      expect(second.status).toBe(200);
+      expect(limitedEmbedderCalls).toBe(2);
+
+      const third = await postLimited();
+      expect(third.status).toBe(429);
+
+      const thirdBody = await readError(third);
+      expect(thirdBody.error.code).toBe('rate_limited');
+      expect(thirdBody.error.message).toEqual(expect.any(String));
+      expect(limitedEmbedderCalls).toBe(2);
+
+      vi.advanceTimersByTime(51);
+
+      const fourth = await postLimited();
+      expect(fourth.status).toBe(200);
+      expect(limitedEmbedderCalls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries loading the embedder after a failed load', async () => {
+    const body = JSON.stringify({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      prompt: PROMPT_TEXT,
+      limit: 1,
+    });
+    const postRetry = (): Promise<Response> =>
+      fetch(`${baseUrl}/retry-recommendations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+
+    const first = await postRetry();
+
+    expect(first.status).toBe(500);
+    await expect(first.json()).resolves.toEqual({
+      error: { code: 'internal_error', message: 'Internal server error.' },
+    });
+    expect(retryEmbedderCreations).toBe(1);
+
+    const second = await postRetry();
+
+    expect(second.status).toBe(200);
+    expect(retryEmbedderCreations).toBe(2);
+
+    const secondBody = await readBody(second);
+
+    expect(secondBody.coldStart).toBe(false);
+    expect(secondBody.movies.map((movie) => movie.id)).toEqual([AXIS_TWO_ID]);
   });
 
   it('accepts source catalog without candidateIds', async () => {

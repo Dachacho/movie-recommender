@@ -85,6 +85,7 @@ export const tasteVectorSchema = z
 export const recommendationRequestSchema = z
   .object({
     source: recommendationSourceSchema,
+    prompt: z.string().trim().min(1).max(300).nullish(),
     tasteVector: tasteVectorSchema.nullish(),
     candidateIds: movieIdsSchema.optional(),
     excludeIds: movieIdsSchema.optional(),
