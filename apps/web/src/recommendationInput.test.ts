@@ -24,6 +24,7 @@ describe('buildRecommendationInput', () => {
       source: 'catalog',
       limit: 4,
       tasteVector: TASTE_VECTOR,
+      excludeIds: [3, 7],
     });
   });
 
@@ -31,6 +32,7 @@ describe('buildRecommendationInput', () => {
     expect(buildRecommendationInput(RATINGS, [], null, '')).toEqual({
       source: 'catalog',
       limit: 4,
+      excludeIds: [3, 7],
     });
   });
 
@@ -41,19 +43,29 @@ describe('buildRecommendationInput', () => {
     });
   });
 
-  it('sorts and deduplicates watched ids into excludeIds', () => {
+  it('unions, sorts and deduplicates rated and watched ids into excludeIds', () => {
     expect(buildRecommendationInput(RATINGS, [9, 4, 9, 2], TASTE_VECTOR, '')).toEqual({
       source: 'catalog',
       limit: 4,
       tasteVector: TASTE_VECTOR,
-      excludeIds: [2, 4, 9],
+      excludeIds: [2, 3, 4, 7, 9],
     });
   });
 
-  it('omits excludeIds when no movies have been watched', () => {
-    expect(buildRecommendationInput(RATINGS, [], TASTE_VECTOR, '')).not.toHaveProperty(
-      'excludeIds',
-    );
+  it('excludes rated ids even when nothing has been watched', () => {
+    expect(buildRecommendationInput(RATINGS, [], TASTE_VECTOR, '')).toMatchObject({
+      excludeIds: [3, 7],
+    });
+  });
+
+  it('deduplicates ids that are both rated and watched', () => {
+    expect(buildRecommendationInput(RATINGS, [7, 3], TASTE_VECTOR, '')).toMatchObject({
+      excludeIds: [3, 7],
+    });
+  });
+
+  it('omits excludeIds when nothing has been rated or watched', () => {
+    expect(buildRecommendationInput([], [], TASTE_VECTOR, '')).not.toHaveProperty('excludeIds');
   });
 
   it('trims the prompt and omits a blank prompt', () => {

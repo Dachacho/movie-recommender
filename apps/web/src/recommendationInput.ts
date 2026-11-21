@@ -5,6 +5,8 @@ type TasteRating = TasteRequest['ratings'][number];
 /**
  * Pure assembly of the recommendation request from the guest profile and the
  * stateless taste result. A null taste vector means cold start, not an error.
+ * Rating a film implies having seen it, so rated ids are excluded alongside
+ * watched ids.
  */
 export function buildRecommendationInput(
   ratings: readonly TasteRating[],
@@ -13,7 +15,8 @@ export function buildRecommendationInput(
   prompt: string,
 ): RecommendationRequest {
   const trimmedPrompt = prompt.trim();
-  const excludeIds = [...new Set(watchedIds)].sort((left, right) => left - right);
+  const seenIds = [...watchedIds, ...ratings.map((rating) => rating.movieId)];
+  const excludeIds = [...new Set(seenIds)].sort((left, right) => left - right);
   const includeTasteVector = ratings.length > 0 && tasteVector !== null;
 
   return {

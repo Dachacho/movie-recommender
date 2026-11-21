@@ -332,7 +332,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Find my movie' })).toBeTruthy();
   });
 
-  it('requests a taste vector and excludes watched movies from recommendations', async () => {
+  it('requests a taste vector and excludes rated and watched movies from recommendations', async () => {
     const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
     const profile = createProfile();
 
@@ -351,8 +351,22 @@ describe('App', () => {
       limit: 4,
       prompt: 'quiet science fiction',
       tasteVector: TASTE_VECTOR,
-      excludeIds: [3],
+      excludeIds: [1, 3],
     });
+  });
+
+  it('excludes a rated movie from recommendations when nothing is marked watched', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.setRating(2, 4);
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 1)).toMatchObject({ excludeIds: [2] });
   });
 
   it('calls only recommendations when the guest has no ratings', async () => {
@@ -377,7 +391,7 @@ describe('App', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
-    expect(submittedBody(fetchMock, 1)).toEqual({ source: 'catalog', limit: 4 });
+    expect(submittedBody(fetchMock, 1)).toEqual({ source: 'catalog', limit: 4, excludeIds: [1] });
   });
 
   it('caches the taste vector until the profile version changes', async () => {
