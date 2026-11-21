@@ -36,7 +36,7 @@ Embeddings are not included. Generate 384-dimensional MiniLM vectors locally wit
 - watchlist: user_id + movie_id composite PK, added_at.
 - cooldowns: user_id + movie_id composite PK, expires_at.
 - lists: id PK, movie_ids array; add ownership if persisting private lists.
-Guest ratings, watched IDs, watchlist, cooldowns, taste and history live in IndexedDB. Guest cooldowns are enforced client-side and sent as validated `excludeIds`. The only guest payload sent to the server is the ratings input to the stateless `POST /taste`; it is never logged or persisted. Account history persistence can be added when accounts are implemented. Guest export protects against browser eviction. All users share the movie catalog.
+Guest ratings, watched IDs, watchlist, cooldowns, taste and history live in IndexedDB. Guest cooldowns are enforced client-side and sent as validated `excludeIds`. Rating a film implies it has been seen: the client unions rated ids with watched ids in `excludeIds`, so nothing the guest has rated is picked again. The only guest payload sent to the server is the ratings input to the stateless `POST /taste`; it is never logged or persisted. Account history persistence can be added when accounts are implemented. Guest export protects against browser eviction. All users share the movie catalog.
 
 ## Recommendation algorithm
 1. Taste vector = normalize(sum(movie_embedding * (rating - 2.5))). Ignore unrated movies. Handle zero/near-zero norm with a cold-start fallback.
@@ -44,6 +44,7 @@ Guest ratings, watched IDs, watchlist, cooldowns, taste and history live in Inde
 3. Filter eligible catalog by source, watched IDs, cooldowns and hard constraints before ranking. Use cosine similarity via pgvector. Exact search is sufficient for the initial catalog; benchmark before adding ANN indexes.
 4. Select best candidate, then rerank alternatives for diversity using a simple similarity penalty. Exploration relaxes taste ranking, never hard filters. Do not gate by community rating.
 5. Return up to four real movies. Single replacement excludes the other visible picks and the rejected pick; full refresh excludes all replaced picks. Persist cooldowns for seven days. Recalculate taste after rating changes.
+6. A small reception tilt (similarity + 0.05 * qualityScore of log-scaled vote count and vote average) breaks near-ties toward better-received films. It is an interim, product-approved value, never an eligibility gate, and must be retuned against held-out evaluation evidence.
 
 Evaluate with deterministic unit tests and held-out ratings; tune weights only after inspecting actual results. A single centroid may dilute distinct tastes; clustering is explicitly deferred.
 
