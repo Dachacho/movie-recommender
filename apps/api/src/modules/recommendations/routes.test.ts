@@ -86,7 +86,7 @@ const FIXTURES: readonly Fixture[] = [
     releaseYear: 2004,
     runtime: 104,
     overview: 'Fourth recommendation overview.',
-    genres: ['Horror'],
+    genres: ['Horror', 'Thriller'],
     director: 'Dana Director',
     cast: ['Actor Five'],
     posterPath: '/recommendation-four.jpg',
@@ -124,7 +124,7 @@ const FIXTURE_CARDS = FIXTURES.map(toMovieCard);
 
 const TASTE_VECTOR = axisEmbedding(0);
 
-const PROMPT_TEXT = 'a quiet science fiction film about loneliness';
+const PROMPT_TEXT = 'a quiet film about loneliness';
 const PROMPT_AXIS = 1;
 
 let embedderCalls: string[][] = [];
@@ -357,6 +357,54 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
     expect(body.coldStart).toBe(false);
     expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_TWO_ID]);
     expect(embedderCalls).toEqual([[PROMPT_TEXT]]);
+  });
+
+  it('applies a genre parsed from the prompt as a hard filter', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      tasteVector: TASTE_VECTOR,
+      prompt: 'sweaty thriller',
+      limit: 4,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_FOUR_ID]);
+    expect(body.movies[0]?.genres).toContain('Thriller');
+    expect(embedderCalls).toEqual([['sweaty thriller']]);
+  });
+
+  it('applies prompt constraints when no taste vector is sent', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      prompt: 'sweaty thriller',
+      limit: 4,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_FOUR_ID]);
+  });
+
+  it('returns an explicit empty result when prompt constraints match no candidate', async () => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      tasteVector: TASTE_VECTOR,
+      prompt: 'a 90s science fiction film under two hours',
+      limit: 4,
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ movies: [], coldStart: false });
   });
 
   it.each([
