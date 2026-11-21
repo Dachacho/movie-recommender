@@ -1,11 +1,10 @@
 # Backlog
 
 ## To do
-- [ ] For discussion: adopt new-snapshot-only fields — US age rating (certification_us) for card display, IMDb rating/votes for evaluation; needs a schema migration. Also note the new set lacks an adult flag for curation.
-
+- [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration.
-- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed.
+- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
 
