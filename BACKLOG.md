@@ -1,7 +1,7 @@
 # Backlog
 
 ## To do
-- [ ] Build minimal recommendation screen: main pick, alternatives, optional prompt.
+
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration.
@@ -12,6 +12,7 @@
 ## Doing
 
 ## Done
+- [x] Build minimal recommendation screen: main pick, alternatives, optional prompt.
 - [x] Initialize npm workspaces, Express, React/Vite, shared TypeScript configuration, Vitest and Docker Compose PostgreSQL/pgvector.
 - [x] Inspect seed dataset: schema, license/provenance, IDs, coverage, model compatibility; document findings and decide whether to adopt or re-embed.
 - [x] Create movie schema/migrations and idempotent seed importer; verify row counts, duplicates and vector dimensions.
