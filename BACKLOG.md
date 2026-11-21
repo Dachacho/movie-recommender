@@ -3,7 +3,6 @@
 ## To do
 - [ ] For discussion: adopt new-snapshot-only fields — US age rating (certification_us) for card display, IMDb rating/votes for evaluation; needs a schema migration. Also note the new set lacks an adult flag for curation.
 
-- [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
 - [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration.
 - [ ] Evaluate ranking against held-out ratings and baselines; tune if needed.
@@ -13,6 +12,7 @@
 ## Doing
 
 ## Done
+- [x] Add IndexedDB guest profile, ratings, watched state and watchlist. (Dexie-backed, Zod-validated; ratings power the stateless /taste flow, watched ids excluded from picks; library UI with half-star ratings and toggles.)
 - [x] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. (Hard filters shipped; soft boosts deferred to the evaluation ticket so tuning uses evidence, not guesses.)
 - [x] Re-import a fresher TMDB snapshot: fixes the ~93% dead poster paths found in sampling and covers post-2017 films; re-clean malformed/duplicate IDs, re-embed the whole catalog with the pinned model, re-verify counts. (2026-11-21 alanvourch export, top-40k by popularity; 40,000 rows verified, posters live, checksums stable across runs.)
 - [x] Poster fix: sample-verify stored poster paths against image.tmdb.org, then render a graceful placeholder on broken images; decide whether a fresher snapshot re-import is needed. (Sampling: 28/30 dead; re-import ticket added.)
