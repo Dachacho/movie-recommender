@@ -1,6 +1,8 @@
 # Backlog
 
 ## To do
+- [ ] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. Fixes literal matches like "Thriller" (the MJ video) for "sweaty thriller".
+- [ ] Poster fix: sample-verify stored poster paths against image.tmdb.org, then render a graceful placeholder on broken images; decide whether a fresher snapshot re-import is needed.
 
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
 - [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
