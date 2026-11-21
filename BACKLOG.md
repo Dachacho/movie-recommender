@@ -1,7 +1,6 @@
 # Backlog
 
 ## To do
-- [ ] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. Fixes literal matches like "Thriller" (the MJ video) for "sweaty thriller".
 - [ ] For discussion: adopt new-snapshot-only fields — US age rating (certification_us) for card display, IMDb rating/votes for evaluation; needs a schema migration. Also note the new set lacks an adult flag for curation.
 
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
@@ -14,6 +13,7 @@
 ## Doing
 
 ## Done
+- [x] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. (Hard filters shipped; soft boosts deferred to the evaluation ticket so tuning uses evidence, not guesses.)
 - [x] Re-import a fresher TMDB snapshot: fixes the ~93% dead poster paths found in sampling and covers post-2017 films; re-clean malformed/duplicate IDs, re-embed the whole catalog with the pinned model, re-verify counts. (2026-11-21 alanvourch export, top-40k by popularity; 40,000 rows verified, posters live, checksums stable across runs.)
 - [x] Poster fix: sample-verify stored poster paths against image.tmdb.org, then render a graceful placeholder on broken images; decide whether a fresher snapshot re-import is needed. (Sampling: 28/30 dead; re-import ticket added.)
 - [x] Build minimal recommendation screen: main pick, alternatives, optional prompt.
