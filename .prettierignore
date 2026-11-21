@@ -4,6 +4,7 @@ coverage/
 .agents/
 .opencode/
 apps/api/drizzle/meta/
+apps/api/src/modules/movies/fixtures/
 package-lock.json
 skills-lock.json
 *.md
