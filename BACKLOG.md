@@ -2,7 +2,6 @@
 
 ## To do
 - [ ] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. Fixes literal matches like "Thriller" (the MJ video) for "sweaty thriller".
-- [ ] Poster fix: sample-verify stored poster paths against image.tmdb.org, then render a graceful placeholder on broken images; decide whether a fresher snapshot re-import is needed.
 - [ ] Re-import a fresher TMDB snapshot: fixes the ~93% dead poster paths found in sampling and covers post-2017 films; re-clean malformed/duplicate IDs, re-embed the whole catalog with the pinned model, re-verify counts.
 
 - [ ] Add IndexedDB guest profile, ratings, watched state and watchlist.
@@ -15,6 +14,7 @@
 ## Doing
 
 ## Done
+- [x] Poster fix: sample-verify stored poster paths against image.tmdb.org, then render a graceful placeholder on broken images; decide whether a fresher snapshot re-import is needed. (Sampling: 28/30 dead; re-import ticket added.)
 - [x] Build minimal recommendation screen: main pick, alternatives, optional prompt.
 - [x] Initialize npm workspaces, Express, React/Vite, shared TypeScript configuration, Vitest and Docker Compose PostgreSQL/pgvector.
 - [x] Inspect seed dataset: schema, license/provenance, IDs, coverage, model compatibility; document findings and decide whether to adopt or re-embed.
