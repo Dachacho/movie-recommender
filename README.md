@@ -166,7 +166,7 @@ curl -s -X POST http://localhost:3000/taste \
 ```sh
 curl -s -X POST http://localhost:3000/recommendations \
   -H 'content-type: application/json' \
-  -d '{"source":"catalog","limit":4}'
+  -d '{"source":"catalog","prompt":"a 90s sci-fi under two hours","limit":4}'
 ```
 
 ```json
@@ -179,13 +179,14 @@ curl -s -X POST http://localhost:3000/recommendations \
 - `candidateIds` and `excludeIds`: at most 10,000 unique ids each.
 - `tasteVector`: optional 384-d vector, finite, `|value| ≤ 10`. Omit or send
   `null` for cold start.
+- `prompt`: optional natural-language direction, trimmed to 1–300 characters.
+  It is embedded with the pinned model and combined with `tasteVector` at equal
+  weights; recognized genre, decade and runtime phrases become hard filters.
 - `excludeIds`: optional watched/cooldown ids.
 - `limit`: required, 1–4.
-- Bodies over 256 kB return `413 payload_too_large`.
+- Bodies over 256 kB return `413 payload_too_large`; bursts beyond 30 requests
+  per minute per IP return `429 rate_limited`.
 - Popularity and vote counts are never eligibility gates.
-
-The request does not accept the optional prompt or runtime/genre filters yet;
-those arrive with the UI and prompt tickets.
 
 ## Project layout
 
@@ -194,13 +195,14 @@ apps/api/src/
   app.ts                 Express app and error handling
   server.ts              Bootstrap
   db/                    Drizzle schema, client, migration tests
-  modules/movies/        Catalog import, parsing, search/detail routes
+  modules/movies/        Snapshot import, parsing, search/detail routes
   modules/taste/         Pure taste-vector math + /taste route
-  modules/recommendations/ Candidate query, diversity rerank, engine, route
+  modules/recommendations/ Candidate query, constraints, diversity rerank, route
 apps/web/src/            React recommendation screen
 packages/shared/         Zod request/response contracts
 db/init/                 pgvector extension for Compose
-docs/seed-inspection.md  Verified dataset findings, cleaning rules, license
+docs/seed-inspection.md  2017 seed inspection (historical record)
+docs/catalog-snapshot-2026.md  Current catalog provenance and curation
 ```
 
 ## Data and license
