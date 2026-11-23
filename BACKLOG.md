@@ -2,7 +2,7 @@
 
 ## To do
 - [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
-- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on. Retune the interim quality-tilt weights from the reranker: 0.12 tilt, 0.7/0.3 rating-dominant vote blend, log scale 6 — user reports unfamiliar films still surfacing; decide the right dial value with evidence, and discuss whether a minimum-vote threshold is acceptable given the architecture's no-eligibility-gate rule.)
+- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration — DONE. Evaluation harness + experiment round shipped; recorded result: no taste config beats popularity, tilt sweep monotone to 0.50. APPROVED AND PINNED: raise QUALITY_TILT_WEIGHT 0.12 → 0.50 — apply with widened invariant fixtures (taste-gap > 0.50) and recomputed score anchors; see docs/evaluation-experiments-2026-11-23.md. certification_us rejected for display; the snapshot has no adult flag to curate on.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
 
