@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { App } from './App';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
-import { MAX_EXCLUDE_IDS } from './recommendationInput';
+import { MAX_CANDIDATE_IDS, MAX_EXCLUDE_IDS } from './recommendationInput';
 
 const TRIM_NOTICE =
   'Your library is larger than a single request can exclude — the oldest entries may occasionally reappear.';
+const POOL_TRIM_NOTICE =
+  'Your shortlist is larger than a single request can rank — the highest-numbered entries beyond the first 10,000 were left out this round.';
 
 afterEach(() => {
   cleanup();
@@ -184,6 +186,10 @@ async function submitPrompt(prompt: string): Promise<void> {
   fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
 }
 
+function selectSource(label: string): void {
+  fireEvent.click(screen.getByRole('radio', { name: label }));
+}
+
 describe('App', () => {
   it('shows the heading, prompt label and button before any request', () => {
     renderApp();
@@ -191,6 +197,11 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Movie recommender' })).toBeTruthy();
     expect(getPromptInput().value).toBe('');
     expect(screen.getByRole('button', { name: 'Find my movie' })).toBeTruthy();
+    expect(
+      (screen.getByRole('radio', { name: 'The whole catalog' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.getByRole('radio', { name: 'My watchlist' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Rewatch shortlist' })).toBeTruthy();
   });
 
   it('posts a trimmed prompt when the input is not empty', async () => {
@@ -408,6 +419,237 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/recommendations');
     expect(submittedBody(fetchMock)).toEqual({ source: 'catalog', limit: 4 });
+  });
+
+  it('shows the watchlist empty state and sends no request when the watchlist is empty', async () => {
+    const fetchMock = stubFetch();
+
+    renderApp();
+    selectSource('My watchlist');
+    await submitPrompt('');
+
+    expect(
+      await screen.findByText('Your watchlist is empty — add films in the library.'),
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    selectSource('The whole catalog');
+    expect(screen.queryByText('Your watchlist is empty — add films in the library.')).toBeNull();
+  });
+
+  it('shows the rewatch empty state and sends no request without a four-star film', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(1, 3.5);
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+
+    expect(
+      await screen.findByText('Rate some films 4 stars or higher to build a rewatch shortlist.'),
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('requests recommendations from the watchlist with the usual exclusions', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.addToWatchlist(3);
+    await profile.setRating(1, 4.5);
+    await profile.setWatched(2);
+
+    renderApp(profile);
+    selectSource('My watchlist');
+    await submitPrompt('  comfort  ');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'watchlist',
+      limit: 4,
+      candidateIds: [3],
+      prompt: 'comfort',
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 2],
+    });
+  });
+
+  it('requests the rewatch shortlist from the list source without excluding rated films', async () => {
+    const fetchMock = stubTasteAndRecommendations(TASTE_VECTOR);
+    const profile = createProfile();
+
+    await profile.setRating(1, 4.5);
+    await profile.setRating(2, 3.5);
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [1],
+      tasteVector: TASTE_VECTOR,
+    });
+
+    await screen.findByRole('heading', { name: 'Arrival' });
+    expect(screen.queryByText(POOL_TRIM_NOTICE)).toBeNull();
+  });
+
+  it('replaces a rewatch pick from the same shortlist source', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(1, 4.5);
+    await profile.setRating(3, 4);
+    await profile.setRating(6, 4.5);
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, HEAT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'Sicario' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(submittedBody(fetchMock, 2)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [1, 3, 6],
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 3],
+    });
+  });
+
+  it('shows a quiet notice when the rewatch pool is trimmed and still renders picks', async () => {
+    const storage = new MemoryGuestProfileStorage();
+    const profile = new GuestProfile(storage);
+    const fetchMock = stubFetch();
+
+    storage.seedRatings(
+      Array.from({ length: 10_005 }, (_value, index) => ({
+        movieId: index + 1,
+        rating: 4,
+        updatedAt: index,
+      })),
+    );
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+
+    expect(await screen.findByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    expect(screen.getByText(POOL_TRIM_NOTICE)).toBeTruthy();
+    expect(submittedBody(fetchMock, 1).candidateIds).toHaveLength(MAX_CANDIDATE_IDS);
+    expect(submittedBody(fetchMock, 1).excludeIds).toBeUndefined();
+  });
+
+  it('refreshes a rewatch round from the shortlist without rated or watched exclusions', async () => {
+    const now = 1_700_000_000_000;
+    const storage = new MemoryGuestProfileStorage();
+    storage.seedCooldowns([{ movieId: 9, expiresAt: now + 1 }]);
+    const profile = new GuestProfile(storage, { now: () => now });
+    const fetchMock = stubFetch();
+
+    await profile.setRating(1, 4.5);
+    await profile.setRating(3, 4);
+    await profile.setRating(6, 4.5);
+    await profile.setWatched(2);
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, HEAT, SICARIO], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [THE_LIGHTHOUSE], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+    await screen.findByRole('button', { name: 'Refresh all' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(await screen.findByRole('heading', { name: 'The Lighthouse' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(submittedBody(fetchMock, 2)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [1, 3, 6],
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 3, 6, 9],
+    });
+  });
+
+  it('keeps rewatch picks and sends nothing when the pool empties before a replacement', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(1, 4.5);
+    await profile.setRating(3, 4);
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, HEAT], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('Rewatch shortlist');
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    await profile.removeRating(1);
+    await profile.removeRating(3);
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    expect(
+      await screen.findByText('Rate some films 4 stars or higher to build a rewatch shortlist.'),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+  });
+
+  it('refreshes a watchlist round from the watchlist source', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.addToWatchlist(3);
+    await profile.setRating(1, 4.5);
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [HEAT], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('My watchlist');
+    await submitPrompt('');
+    await screen.findByRole('button', { name: 'Refresh all' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(await screen.findByRole('heading', { name: 'Heat' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(submittedBody(fetchMock, 2)).toEqual({
+      source: 'watchlist',
+      limit: 4,
+      candidateIds: [3],
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 2],
+    });
   });
 
   it('continues without a taste vector when the taste response is null', async () => {

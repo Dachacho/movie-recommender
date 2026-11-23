@@ -14,16 +14,20 @@ import {
   buildRefreshAllInput,
   buildReplacementInput,
   mergeReplacement,
+  rewatchCandidateIds,
+  type RecommendationSourceKind,
+  type SourceSelection,
 } from './recommendationInput';
 
 /**
- * The intent a round was drawn with. The taste vector and prompt stay pinned
- * to the round; hard exclusions are always re-read from the profile so films
- * rated or watched while the picks are on screen are never suggested.
+ * The intent a round was drawn with. The taste vector, prompt and source stay
+ * pinned to the round; hard exclusions and the candidate pool are always
+ * re-read from the profile so later library changes are respected.
  */
 interface RoundIntent {
   tasteVector: TasteVector;
   prompt: string;
+  source: RecommendationSourceKind;
 }
 
 interface PickRound {
@@ -36,6 +40,7 @@ type ScreenState =
   | { status: 'idle' }
   | { status: 'pending' }
   | { status: 'results'; round: PickRound }
+  | { status: 'empty-pool'; message: string }
   | { status: 'error'; message: string };
 
 type ActionState =
@@ -60,6 +65,54 @@ const REPLACE_ERROR_MESSAGE = 'Could not find another movie. Your picks are unch
 const REFRESH_ERROR_MESSAGE = 'Could not refresh the picks. Your picks are unchanged.';
 const EXCLUSION_TRIM_NOTICE =
   'Your library is larger than a single request can exclude — the oldest entries may occasionally reappear.';
+const POOL_TRIM_NOTICE =
+  'Your shortlist is larger than a single request can rank — the highest-numbered entries beyond the first 10,000 were left out this round.';
+
+const EMPTY_WATCHLIST_MESSAGE = 'Your watchlist is empty — add films in the library.';
+const EMPTY_REWATCH_MESSAGE = 'Rate some films 4 stars or higher to build a rewatch shortlist.';
+
+const SOURCE_OPTIONS: readonly { value: RecommendationSourceKind; label: string }[] = [
+  { value: 'catalog', label: 'The whole catalog' },
+  { value: 'watchlist', label: 'My watchlist' },
+  { value: 'rewatch', label: 'Rewatch shortlist' },
+];
+
+interface SourceResolution {
+  selection: SourceSelection;
+  /** Set when a pool source has nothing to draw from. */
+  emptyMessage: string | null;
+}
+
+/**
+ * Reads the round's candidate pool at action time. Watchlist films keep the
+ * usual rated/watched exclusions; rewatch candidates are rated films, so the
+ * builder treats them differently. An empty pool must never reach the API:
+ * `recommendationRequestSchema` rejects empty `candidateIds`.
+ */
+async function resolveSourceSelection(
+  profile: GuestProfile,
+  kind: RecommendationSourceKind,
+): Promise<SourceResolution> {
+  if (kind === 'catalog') {
+    return { selection: { kind }, emptyMessage: null };
+  }
+
+  if (kind === 'watchlist') {
+    const candidateIds = await profile.getWatchlistIds();
+
+    return {
+      selection: { kind, candidateIds },
+      emptyMessage: candidateIds.length === 0 ? EMPTY_WATCHLIST_MESSAGE : null,
+    };
+  }
+
+  const candidateIds = rewatchCandidateIds(await profile.getRatings());
+
+  return {
+    selection: { kind: 'rewatch', candidateIds },
+    emptyMessage: candidateIds.length === 0 ? EMPTY_REWATCH_MESSAGE : null,
+  };
+}
 
 async function tasteVectorFor(
   ratings: RatingsPayload,
@@ -236,14 +289,22 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
   const [prompt, setPrompt] = useState('');
+  const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
   const [state, setState] = useState<ScreenState>({ status: 'idle' });
   const [action, setAction] = useState<ActionState>({ status: 'idle' });
   const [exclusionTrimmed, setExclusionTrimmed] = useState(false);
+  const [poolTrimmed, setPoolTrimmed] = useState(false);
   const requestId = useRef(0);
   const tasteCache = useRef<TasteCache | null>(null);
 
   const actionPending = action.status === 'pending';
   const pending = state.status === 'pending';
+
+  function handleSourceChange(next: RecommendationSourceKind): void {
+    setSourceKind(next);
+    // The empty-pool copy names one source; drop it when the source changes.
+    setState((previous) => (previous.status === 'empty-pool' ? { status: 'idle' } : previous));
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -266,6 +327,14 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
+      const source = await resolveSourceSelection(profile, sourceKind);
+
+      // An empty pool has nothing to rank; skip the taste request too.
+      if (source.emptyMessage !== null) {
+        setState({ status: 'empty-pool', message: source.emptyMessage });
+        return;
+      }
+
       const tasteVector = await tasteVectorFor(
         ratings,
         profileVersion,
@@ -275,22 +344,24 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         },
       );
       const trimmedPrompt = prompt.trim();
-      const { request, droppedIds } = buildRecommendationInput({
+      const { request, droppedIds, poolDroppedIds } = buildRecommendationInput({
         ratedIds,
         watchedIds,
         tasteVector,
         prompt: trimmedPrompt,
         cooldownIds,
+        source: source.selection,
       });
       const response = await fetchRecommendations(request);
 
       setExclusionTrimmed(droppedIds.length > 0);
+      setPoolTrimmed(poolDroppedIds.length > 0);
       setState({
         status: 'results',
         round: {
           requestId: currentRequestId,
           movies: response.movies,
-          intent: { tasteVector, prompt: trimmedPrompt },
+          intent: { tasteVector, prompt: trimmedPrompt, source: sourceKind },
         },
       });
     } catch (error) {
@@ -327,7 +398,14 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
-      const { request, droppedIds } = buildReplacementInput({
+      const source = await resolveSourceSelection(profile, round.intent.source);
+
+      if (source.emptyMessage !== null) {
+        setAction({ status: 'error', message: source.emptyMessage });
+        return;
+      }
+
+      const { request, droppedIds, poolDroppedIds } = buildReplacementInput({
         ratedIds,
         watchedIds,
         tasteVector: round.intent.tasteVector,
@@ -335,12 +413,14 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         visibleMovieIds: round.movies.map((pick) => pick.id),
         replacedMovieId: movie.id,
         cooldownIds,
+        source: source.selection,
       });
       const response = await fetchRecommendations(request);
 
       await profile.setCooldown(movie.id);
 
       setExclusionTrimmed(droppedIds.length > 0);
+      setPoolTrimmed(poolDroppedIds.length > 0);
       setState((previous) =>
         previous.status === 'results'
           ? {
@@ -379,19 +459,28 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
-      const { request, droppedIds } = buildRefreshAllInput({
+      const source = await resolveSourceSelection(profile, round.intent.source);
+
+      if (source.emptyMessage !== null) {
+        setAction({ status: 'error', message: source.emptyMessage });
+        return;
+      }
+
+      const { request, droppedIds, poolDroppedIds } = buildRefreshAllInput({
         ratedIds,
         watchedIds,
         tasteVector: round.intent.tasteVector,
         prompt: round.intent.prompt,
         visibleMovieIds: round.movies.map((pick) => pick.id),
         cooldownIds,
+        source: source.selection,
       });
       const response = await fetchRecommendations(request);
 
       await profile.setCooldowns(round.movies.map((pick) => pick.id));
 
       setExclusionTrimmed(droppedIds.length > 0);
+      setPoolTrimmed(poolDroppedIds.length > 0);
       setState({
         status: 'results',
         round: { ...round, movies: response.movies },
@@ -414,6 +503,24 @@ export function App({ profile: providedProfile }: AppProps = {}) {
       </header>
 
       <form className="prompt-form" onSubmit={handleSubmit}>
+        <fieldset className="source-picker">
+          <legend>Recommend from</legend>
+          <div className="source-picker__options">
+            {SOURCE_OPTIONS.map((option) => (
+              <label className="source-picker__option" key={option.value}>
+                <input
+                  type="radio"
+                  name="recommendation-source"
+                  value={option.value}
+                  checked={sourceKind === option.value}
+                  onChange={() => handleSourceChange(option.value)}
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
         <label htmlFor="prompt">What are you in the mood for?</label>
         <div className="prompt-form__controls">
           <input
@@ -435,6 +542,8 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         {pending && <p className="status">Finding something worth watching…</p>}
 
         {state.status === 'error' && <p className="status status--error">{state.message}</p>}
+
+        {state.status === 'empty-pool' && <p className="status">{state.message}</p>}
 
         {action.status === 'pending' && (
           <p className="status">
@@ -492,6 +601,8 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         {state.status === 'results' && exclusionTrimmed && (
           <p className="status">{EXCLUSION_TRIM_NOTICE}</p>
         )}
+
+        {state.status === 'results' && poolTrimmed && <p className="status">{POOL_TRIM_NOTICE}</p>}
       </section>
 
       <Library profile={profile} />

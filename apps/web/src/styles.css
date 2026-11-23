@@ -62,6 +62,50 @@ body {
   font-size: 0.95rem;
 }
 
+.prompt-form .source-picker {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.prompt-form .source-picker legend {
+  padding: 0;
+  margin-bottom: 0.55rem;
+  color: var(--slate);
+  font-size: 0.95rem;
+}
+
+.source-picker__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1.5rem;
+}
+
+.prompt-form .source-picker__option {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  color: var(--slate);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.prompt-form .source-picker__option:hover {
+  color: var(--paper);
+}
+
+.source-picker__option input {
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+
+.source-picker__option:focus-within {
+  color: var(--paper);
+}
+
 .prompt-form__controls {
   display: flex;
   flex-wrap: wrap;
