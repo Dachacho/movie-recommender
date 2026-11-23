@@ -3,8 +3,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, gte, lte } from 'drizzle-orm';
 import { createDatabase, type Database } from '../../db/client.js';
 import { movies } from '../../db/schema.js';
-import { findColdStartPool, findNearestMovies } from './query.js';
-import { EXPECTED_EMBEDDING_DIMENSIONS, MAX_ID_COUNT, MAX_QUERY_LIMIT } from './types.js';
+import { composeExploredPool, findColdStartPool, findNearestMovies } from './query.js';
+import {
+  CANDIDATE_POOL_SIZE,
+  DEEP_BAND_START,
+  EXPECTED_EMBEDDING_DIMENSIONS,
+  MAX_ID_COUNT,
+  MAX_QUERY_LIMIT,
+} from './types.js';
 
 const FIXTURE_MIN_ID = 991_000_001;
 const FIXTURE_MAX_ID = 991_000_011;
@@ -148,6 +154,104 @@ function sortedIds(rows: ReadonlyArray<{ movieId: number }>): number[] {
   return rows.map((row) => row.movieId).sort((left, right) => left - right);
 }
 
+function rankedRanks(length: number, start = 0): number[] {
+  return Array.from({ length }, (_, index) => start + index);
+}
+
+describe('composeExploredPool', () => {
+  // Ranked candidate lists stand in for the distance-ordered rows: the value is
+  // the rank, so every assertion reads as "near ranks first, then deep ranks".
+  const fullList = rankedRanks(DEEP_BAND_START + CANDIDATE_POOL_SIZE);
+
+  it('returns the top pool unchanged at exploration 0', () => {
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0)).toEqual(
+      rankedRanks(CANDIDATE_POOL_SIZE),
+    );
+  });
+
+  it('draws a quarter of the pool from the deep band at 0.25', () => {
+    // round(0.25 * 50) = 13 deep, 37 near.
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0.25)).toEqual([
+      ...rankedRanks(37),
+      ...rankedRanks(13, DEEP_BAND_START),
+    ]);
+  });
+
+  it('draws half the pool from the deep band at 0.5', () => {
+    // round(0.5 * 50) = 25 deep, 25 near.
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0.5)).toEqual([
+      ...rankedRanks(25),
+      ...rankedRanks(25, DEEP_BAND_START),
+    ]);
+  });
+
+  it('draws the whole pool from the deep band at 1', () => {
+    // round(1 * 50) = 50 deep, no near rows.
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 1)).toEqual(
+      rankedRanks(CANDIDATE_POOL_SIZE, DEEP_BAND_START),
+    );
+  });
+
+  it('rounds deepCount to the nearest whole film', () => {
+    // round(0.49 * 50) = 25; round(0.51 * 50) = 26.
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0.49)).toEqual([
+      ...rankedRanks(25),
+      ...rankedRanks(25, DEEP_BAND_START),
+    ]);
+    expect(composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0.51)).toEqual([
+      ...rankedRanks(24),
+      ...rankedRanks(26, DEEP_BAND_START),
+    ]);
+  });
+
+  it('supports a deepCount equal to the pool size on small pools', () => {
+    expect(composeExploredPool(rankedRanks(510), 2, 1)).toEqual([
+      DEEP_BAND_START,
+      DEEP_BAND_START + 1,
+    ]);
+  });
+
+  it('degrades to the top pool when the list is shorter than the deep band', () => {
+    const shortList = rankedRanks(10);
+
+    expect(composeExploredPool(shortList, CANDIDATE_POOL_SIZE, 0.5)).toEqual(shortList);
+    expect(composeExploredPool(shortList, CANDIDATE_POOL_SIZE, 1)).toEqual(shortList);
+  });
+
+  it('degrades to the top pool when the deep band cannot supply deepCount rows', () => {
+    // 520 rows cannot fill ranks 500..524 needed at exploration 0.5.
+    const partialList = rankedRanks(DEEP_BAND_START + 20);
+
+    expect(composeExploredPool(partialList, CANDIDATE_POOL_SIZE, 0.5)).toEqual(
+      rankedRanks(CANDIDATE_POOL_SIZE),
+    );
+  });
+
+  it('returns an empty list for an empty candidate list', () => {
+    expect(composeExploredPool([], CANDIDATE_POOL_SIZE, 0.5)).toEqual([]);
+  });
+
+  it('does not mutate the input list', () => {
+    const snapshot = [...fullList];
+
+    composeExploredPool(fullList, CANDIDATE_POOL_SIZE, 0.5);
+
+    expect(fullList).toEqual(snapshot);
+  });
+
+  it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid exploration %s',
+    (exploration) => {
+      expect(() => composeExploredPool(fullList, CANDIDATE_POOL_SIZE, exploration)).toThrow(
+        RangeError,
+      );
+      expect(() => composeExploredPool(fullList, CANDIDATE_POOL_SIZE, exploration)).toThrow(
+        /exploration/,
+      );
+    },
+  );
+});
+
 describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', () => {
   let pool: Pool;
   let db: Database;
@@ -240,6 +344,22 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
       });
 
       expect(rows.map((row) => row.movieId)).toEqual([991_000_001, 991_000_002, 991_000_003]);
+    });
+
+    it('falls back to the top pool when the candidate list is shorter than the deep band', async () => {
+      const plain = await findNearestMovies(db, {
+        embedding: unitEmbedding,
+        candidateIds: FIXTURE_IDS,
+        limit: 4,
+      });
+      const explored = await findNearestMovies(db, {
+        embedding: unitEmbedding,
+        candidateIds: FIXTURE_IDS,
+        exploration: 0.5,
+        limit: 4,
+      });
+
+      expect(explored).toEqual(plain);
     });
   });
 
@@ -412,6 +532,15 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
       );
       await expect(findColdStartPool(db, { limit })).rejects.toThrow(RangeError);
     });
+
+    it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])(
+      'rejects invalid exploration %s',
+      async (exploration) => {
+        await expect(
+          findNearestMovies(db, { embedding: unitEmbedding, exploration, limit: 1 }),
+        ).rejects.toThrow(/exploration/);
+      },
+    );
 
     it('rejects an embedding with the wrong dimension count', async () => {
       await expect(

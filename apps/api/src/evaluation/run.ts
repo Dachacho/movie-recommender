@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { createDatabase } from '../db/client.js';
-import { CANDIDATE_POOL_SIZE } from '../modules/recommendations/recommend.js';
+import { CANDIDATE_POOL_SIZE } from '../modules/recommendations/types.js';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   LOG_VOTE_SCALE,
@@ -209,7 +209,7 @@ function renderReport(outcome: EvaluationOutcome): string {
   lines.push(
     `- Production path: \`findNearestMovies\` (top ${String(
       EVALUATION_CANDIDATES,
-    )} films the user did not rate in train) → \`applyExploration(pool, 0)\` → \`selectDiverse({ limit: ${String(
+    )} films the user did not rate in train, exploration 0) → \`selectDiverse({ limit: ${String(
       MAX_RECOMMENDATIONS,
     )} })\`.`,
   );

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
-  applyExploration,
   qualityScore,
   selectDiverse,
 } from './select.js';
@@ -367,56 +366,4 @@ describe('selectDiverse', () => {
       expect(() => selectDiverse(pool, validOption)).toThrow(/embedding/);
     });
   });
-});
-
-describe('applyExploration', () => {
-  const POOL = [
-    candidate(1, TASTE_ALIGNED, 0.8, 8.1, 1_000),
-    candidate(2, ORTHOGONAL, -0.4, 6.3, 600),
-  ];
-
-  it('leaves similarities untouched at 0', () => {
-    expect(applyExploration(POOL, 0).map((entry) => entry.similarity)).toEqual([0.8, -0.4]);
-  });
-
-  it('halves the taste weight at 0.5', () => {
-    expect(applyExploration(POOL, 0.5).map((entry) => entry.similarity)).toEqual([0.4, -0.2]);
-  });
-
-  it('flattens every similarity to zero at 1', () => {
-    const relaxed = applyExploration(POOL, 1);
-
-    expect(relaxed.map((entry) => entry.similarity)).toEqual([0, 0]);
-    expect(relaxed.map((entry) => entry.movieId)).toEqual([1, 2]);
-  });
-
-  it('lets the reception tilt decide the first pick at 1', () => {
-    const lowReception = candidate(1, TASTE_ALIGNED, 0.9, 4, 50);
-    const highReception = candidate(2, ORTHOGONAL, 0.1, 9, 50_000);
-
-    expect(
-      selectDiverse([lowReception, highReception], { limit: 1 }).map((pick) => pick.movieId),
-    ).toEqual([1]);
-    expect(
-      selectDiverse(applyExploration([lowReception, highReception], 1), { limit: 1 }).map(
-        (pick) => pick.movieId,
-      ),
-    ).toEqual([2]);
-  });
-
-  it('does not mutate the candidates', () => {
-    const snapshot = structuredClone(POOL);
-
-    applyExploration(POOL, 1);
-
-    expect(POOL).toEqual(snapshot);
-  });
-
-  it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])(
-    'rejects invalid exploration %s',
-    (exploration) => {
-      expect(() => applyExploration(POOL, exploration)).toThrow(RangeError);
-      expect(() => applyExploration(POOL, exploration)).toThrow(/exploration/);
-    },
-  );
 });

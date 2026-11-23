@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { createDatabase } from '../db/client.js';
-import { CANDIDATE_POOL_SIZE } from '../modules/recommendations/recommend.js';
+import { CANDIDATE_POOL_SIZE } from '../modules/recommendations/types.js';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,

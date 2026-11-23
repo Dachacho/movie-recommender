@@ -1,9 +1,12 @@
 import type { Database } from '../../db/client.js';
 import { findColdStartPool, findNearestMovies } from './query.js';
-import { MAX_RECOMMENDATIONS, applyExploration, selectDiverse } from './select.js';
-import type { MovieCandidate, RecommendationFilters, ScoredCandidate } from './types.js';
-
-export const CANDIDATE_POOL_SIZE = 50;
+import { MAX_RECOMMENDATIONS, selectDiverse } from './select.js';
+import {
+  CANDIDATE_POOL_SIZE,
+  type MovieCandidate,
+  type RecommendationFilters,
+  type ScoredCandidate,
+} from './types.js';
 
 export interface RecommendMoviesInput {
   tasteVector?: readonly number[] | null;
@@ -54,14 +57,18 @@ export async function recommendMovies(
   };
 
   if (input.tasteVector !== undefined && input.tasteVector !== null) {
-    const pool = await findNearestMovies(db, { embedding: input.tasteVector, ...shared });
-    // Exploration relaxes taste ranking inside the already-filtered pool; it
-    // never widens or narrows eligibility. Cold start has no taste similarity
-    // to relax, so the option does not apply there.
-    const relaxed = applyExploration(pool, input.exploration ?? 0);
+    // Exploration changes the pool's composition: part of it is drawn from a
+    // deep similarity band so the rerank can pick genuinely outside-the-usual
+    // films. It never widens or narrows eligibility. Cold start has no taste
+    // similarity to explore away from, so the option does not apply there.
+    const pool = await findNearestMovies(db, {
+      embedding: input.tasteVector,
+      ...shared,
+      exploration: input.exploration ?? 0,
+    });
 
     return {
-      movieIds: selectDiverse(relaxed, { limit: input.limit }).map((pick) => pick.movieId),
+      movieIds: selectDiverse(pool, { limit: input.limit }).map((pick) => pick.movieId),
       coldStart: false,
     };
   }

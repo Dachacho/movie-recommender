@@ -126,9 +126,10 @@ const TASTE_VECTOR = axisEmbedding(0);
 
 /**
  * Points most strongly at axis three (the lowest-reception fixture) while a
- * weaker component points at axis one. Taste alone puts axis four first; the
- * 0.50 production tilt already lifts axis one above it, and halving similarity
- * widens that gap.
+ * weaker component points at axis one. Taste alone puts axis four first, but
+ * the 0.50 reception tilt lifts axis one above it. The fixture pool is far
+ * shorter than the deep band, so exploration degrades to the same top pool at
+ * every value (see `composeExploredPool`).
  */
 const EXPLORATION_TASTE_VECTOR = (() => {
   const vector = axisEmbedding(3);
@@ -788,9 +789,20 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
   });
 
   it.each([
-    ['0 keeps the full taste weight', 0, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
-    ['0.5 halves the taste weight', 0.5, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
-    ['1 removes taste from ranking', 1, [AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID, AXIS_FOUR_ID]],
+    // The four-film fixture is shorter than DEEP_BAND_START (500), so every
+    // exploration value degrades to today's top pool; 0.5 therefore keeps the
+    // same ordering as 0 instead of halving taste similarity.
+    ['0 keeps the top pool', 0, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
+    [
+      '0.5 degrades to the top pool on a short fixture pool',
+      0.5,
+      [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID],
+    ],
+    [
+      '1 degrades to the top pool on a short fixture pool',
+      1,
+      [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID],
+    ],
   ])('exploration %s', async (_label, exploration, expectedIds) => {
     const response = await postRecommendations({
       source: 'list',

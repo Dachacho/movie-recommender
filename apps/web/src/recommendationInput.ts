@@ -13,9 +13,10 @@ export const MAX_CANDIDATE_IDS = 10_000;
 export const REWATCH_MIN_RATING = 4;
 
 /**
- * Interim "Surprise me" strength, pending held-out evaluation. The API scales
- * taste similarity by `1 - exploration`, so 0.5 halves taste against the
- * reception tilt without touching hard filters.
+ * Interim "Surprise me" strength, pending held-out evaluation. The API draws
+ * this fraction of the candidate pool from deep similarity ranks (beyond the
+ * top taste matches), so picks can come from outside the usual neighborhood.
+ * Pools too small to supply the deep rows fall back to the plain top pool.
  */
 export const EXPLORATION_STRENGTH = 0.5;
 

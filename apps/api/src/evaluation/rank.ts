@@ -3,7 +3,6 @@ import { findNearestMovies } from '../modules/recommendations/query.js';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
-  applyExploration,
   qualityScore,
   selectDiverse,
 } from '../modules/recommendations/select.js';
@@ -163,9 +162,7 @@ export async function rankUser(
     excludeIds: input.excludedIds,
     limit: EVALUATION_CANDIDATES,
   });
-  const showcase = selectDiverse(applyExploration(pool, 0), {
-    limit: MAX_RECOMMENDATIONS,
-  }).map((pick) => pick.movieId);
+  const showcase = selectDiverse(pool, { limit: MAX_RECOMMENDATIONS }).map((pick) => pick.movieId);
   const excluded = new Set(input.excludedIds);
   const eligible = input.universe.filter((entry) => !excluded.has(entry.movieId));
 

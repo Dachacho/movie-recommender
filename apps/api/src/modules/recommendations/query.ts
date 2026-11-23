@@ -14,6 +14,7 @@ import {
 import type { Database } from '../../db/client.js';
 import { movies } from '../../db/schema.js';
 import {
+  DEEP_BAND_START,
   EXPECTED_EMBEDDING_DIMENSIONS,
   MAX_ID_COUNT,
   MAX_QUERY_LIMIT,
@@ -32,6 +33,46 @@ function validateLimit(limit: number): void {
       `limit must be an integer between 1 and ${MAX_QUERY_LIMIT}, received ${limit}.`,
     );
   }
+}
+
+function validateExploration(exploration: number): void {
+  if (!Number.isFinite(exploration) || exploration < 0 || exploration > 1) {
+    throw new RangeError(
+      `exploration must be a finite number between 0 and 1, received ${exploration}.`,
+    );
+  }
+}
+
+/**
+ * Composes the explored candidate pool from a distance-ordered list. At
+ * exploration e, `round(e * poolSize)` rows come from the deep band starting at
+ * {@link DEEP_BAND_START} and the rest from the top, so exploration changes
+ * which films can be recommended rather than only how they are weighted. At 0
+ * the result is the unchanged top pool.
+ *
+ * Small candidate lists degrade to today's behaviour: when the list cannot
+ * supply the deep band's `deepCount` rows (fewer than
+ * `DEEP_BAND_START + deepCount` entries, including lists shorter than the band
+ * itself), the top `poolSize` rows are returned unchanged. That keeps small
+ * fixture and catalog pools deterministic instead of shrinking or dropping the
+ * deep band into the near ranks.
+ */
+export function composeExploredPool<T>(
+  top: readonly T[],
+  poolSize: number,
+  exploration: number,
+): T[] {
+  validateExploration(exploration);
+
+  const deepCount = Math.round(exploration * poolSize);
+
+  if (deepCount === 0 || top.length < DEEP_BAND_START + deepCount) {
+    return top.slice(0, poolSize);
+  }
+
+  const nearCount = poolSize - deepCount;
+
+  return [...top.slice(0, nearCount), ...top.slice(DEEP_BAND_START, DEEP_BAND_START + deepCount)];
 }
 
 function validateEmbedding(embedding: readonly number[]): void {
@@ -193,10 +234,14 @@ export async function findNearestMovies(
     filters?: RecommendationFilters;
     excludeIds?: readonly number[];
     candidateIds?: readonly number[];
+    exploration?: number;
     limit: number;
   },
 ): Promise<ScoredCandidate[]> {
+  const exploration = input.exploration ?? 0;
+
   validateLimit(input.limit);
+  validateExploration(exploration);
   validateEmbedding(input.embedding);
   validateFilters(input.filters);
   validateIds(input.excludeIds, 'excludeIds');
@@ -206,6 +251,10 @@ export async function findNearestMovies(
     return [];
   }
 
+  // One query fetches the near rows plus the deepest possible deep band; the
+  // deep band is sliced out of the same distance-ordered result.
+  const deepCount = Math.round(exploration * input.limit);
+  const fetchLimit = deepCount > 0 ? DEEP_BAND_START + input.limit : input.limit;
   const distance = sql<number>`${cosineDistance(movies.embedding, JSON.stringify(input.embedding))}`;
   const rows = await db
     .select({
@@ -218,15 +267,17 @@ export async function findNearestMovies(
     .from(movies)
     .where(buildWhere(input.filters, input.excludeIds, input.candidateIds))
     .orderBy(asc(distance), asc(movies.id))
-    .limit(input.limit);
+    .limit(fetchLimit);
 
-  return rows.map((row) => ({
+  const scored = rows.map((row) => ({
     movieId: row.movieId,
     embedding: requireEmbedding(row.embedding),
     voteAverage: row.voteAverage,
     voteCount: row.voteCount,
     similarity: 1 - row.distance,
   }));
+
+  return composeExploredPool(scored, input.limit, exploration);
 }
 
 export async function findColdStartPool(
