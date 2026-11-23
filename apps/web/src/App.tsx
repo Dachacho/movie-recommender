@@ -1,15 +1,18 @@
 import { useRef, useState, type FormEvent } from 'react';
-import type { MovieCard } from '@movie-recommender/shared';
+import type { LetterboxdUnmatched, MovieCard } from '@movie-recommender/shared';
 import {
   RecommendationApiError,
   RecommendationNetworkError,
   fetchRecommendations,
   fetchTasteVector,
+  importLetterboxd,
   type TasteVector,
 } from './api';
 import { Library } from './Library';
+import { convertListPaste } from './listPaste';
 import { createGuestProfile, type GuestProfile, type RatingsPayload } from './profile/GuestProfile';
 import {
+  EXPLORATION_STRENGTH,
   buildRecommendationInput,
   buildRefreshAllInput,
   buildReplacementInput,
@@ -23,11 +26,19 @@ import {
  * The intent a round was drawn with. The taste vector, prompt and source stay
  * pinned to the round; hard exclusions and the candidate pool are always
  * re-read from the profile so later library changes are respected.
+ *
+ * The exception is a pasted list: its matched ids are pinned too, because the
+ * textarea is a one-shot import rather than a live profile collection. A
+ * later paste cannot change a round that is already on screen. "Surprise me"
+ * is a live session mode instead, read from the toggle for every request,
+ * replacements and refreshes included.
  */
 interface RoundIntent {
   tasteVector: TasteVector;
   prompt: string;
   source: RecommendationSourceKind;
+  /** Matched paste ids, fixed for the round; null for sources read live. */
+  candidateIds: readonly number[] | null;
 }
 
 interface PickRound {
@@ -70,12 +81,26 @@ const POOL_TRIM_NOTICE =
 
 const EMPTY_WATCHLIST_MESSAGE = 'Your watchlist is empty — add films in the library.';
 const EMPTY_REWATCH_MESSAGE = 'Rate some films 4 stars or higher to build a rewatch shortlist.';
+const EMPTY_PASTE_MESSAGE = 'No films from that list are in the catalog yet.';
+const EMPTY_PASTE_INPUT_MESSAGE = 'Paste a list first — one film per line.';
+const PASTE_IMPORT_ERROR_MESSAGE = 'Could not match that list. Try again.';
 
 const SOURCE_OPTIONS: readonly { value: RecommendationSourceKind; label: string }[] = [
   { value: 'catalog', label: 'The whole catalog' },
   { value: 'watchlist', label: 'My watchlist' },
   { value: 'rewatch', label: 'Rewatch shortlist' },
+  { value: 'paste', label: "A list I'll paste" },
 ];
+
+interface PasteReport {
+  matched: number;
+  unmatched: readonly LetterboxdUnmatched[];
+  /** Pasted lines the converter could not turn into a film row. */
+  unparseable: readonly string[];
+}
+
+type PastePreparation =
+  { status: 'ready'; candidateIds: number[] } | { status: 'invalid'; message: string };
 
 interface SourceResolution {
   selection: SourceSelection;
@@ -86,12 +111,15 @@ interface SourceResolution {
 /**
  * Reads the round's candidate pool at action time. Watchlist films keep the
  * usual rated/watched exclusions; rewatch candidates are rated films, so the
- * builder treats them differently. An empty pool must never reach the API:
- * `recommendationRequestSchema` rejects empty `candidateIds`.
+ * builder treats them differently. A paste pool is already matched and fixed
+ * for its round, so `fixedCandidateIds` is returned as-is. An empty pool must
+ * never reach the API: `recommendationRequestSchema` rejects empty
+ * `candidateIds`.
  */
 async function resolveSourceSelection(
   profile: GuestProfile,
   kind: RecommendationSourceKind,
+  fixedCandidateIds: readonly number[] | null = null,
 ): Promise<SourceResolution> {
   if (kind === 'catalog') {
     return { selection: { kind }, emptyMessage: null };
@@ -103,6 +131,15 @@ async function resolveSourceSelection(
     return {
       selection: { kind, candidateIds },
       emptyMessage: candidateIds.length === 0 ? EMPTY_WATCHLIST_MESSAGE : null,
+    };
+  }
+
+  if (kind === 'paste') {
+    const candidateIds = fixedCandidateIds ?? [];
+
+    return {
+      selection: { kind, candidateIds },
+      emptyMessage: candidateIds.length === 0 ? EMPTY_PASTE_MESSAGE : null,
     };
   }
 
@@ -290,6 +327,10 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
   const [prompt, setPrompt] = useState('');
   const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
+  const [surpriseMe, setSurpriseMe] = useState(false);
+  const [pastedList, setPastedList] = useState('');
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [pasteReport, setPasteReport] = useState<PasteReport | null>(null);
   const [state, setState] = useState<ScreenState>({ status: 'idle' });
   const [action, setAction] = useState<ActionState>({ status: 'idle' });
   const [exclusionTrimmed, setExclusionTrimmed] = useState(false);
@@ -302,19 +343,57 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   function handleSourceChange(next: RecommendationSourceKind): void {
     setSourceKind(next);
+    setPasteError(null);
     // The empty-pool copy names one source; drop it when the source changes.
     setState((previous) => (previous.status === 'empty-pool' ? { status: 'idle' } : previous));
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  /**
+   * Converts the pasted text and imports it for matching. The conversion is a
+   * pure client-side step; the import endpoint is the already-approved
+   * Letterboxd matcher. Ratings in a pasted Letterboxd CSV are ignored for
+   * this source: the list selects a pool, it does not rate or watch anything.
+   */
+  async function preparePaste(): Promise<PastePreparation> {
+    setPasteError(null);
+    setPasteReport(null);
 
+    if (pastedList.trim() === '') {
+      return { status: 'invalid', message: EMPTY_PASTE_INPUT_MESSAGE };
+    }
+
+    const conversion = convertListPaste(pastedList);
+
+    if (!conversion.ok) {
+      return { status: 'invalid', message: conversion.message };
+    }
+
+    try {
+      const report = await importLetterboxd(conversion.csv);
+
+      setPasteReport({
+        matched: report.matched.length,
+        unmatched: report.unmatched,
+        unparseable: conversion.unparseable,
+      });
+
+      return { status: 'ready', candidateIds: report.matched.map((match) => match.movieId) };
+    } catch (error) {
+      return {
+        status: 'invalid',
+        message: actionErrorMessage(error, PASTE_IMPORT_ERROR_MESSAGE),
+      };
+    }
+  }
+
+  async function submitRound() {
     if (pending || actionPending) {
       return;
     }
 
     requestId.current += 1;
     const currentRequestId = requestId.current;
+    const previousState = state;
 
     setAction({ status: 'idle' });
     setState({ status: 'pending' });
@@ -327,7 +406,25 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
-      const source = await resolveSourceSelection(profile, sourceKind);
+
+      let source: SourceResolution;
+
+      if (sourceKind === 'paste') {
+        const prepared = await preparePaste();
+
+        if (prepared.status === 'invalid') {
+          setPasteError(prepared.message);
+          setState(previousState);
+          return;
+        }
+
+        source = {
+          selection: { kind: 'paste', candidateIds: prepared.candidateIds },
+          emptyMessage: prepared.candidateIds.length === 0 ? EMPTY_PASTE_MESSAGE : null,
+        };
+      } else {
+        source = await resolveSourceSelection(profile, sourceKind);
+      }
 
       // An empty pool has nothing to rank; skip the taste request too.
       if (source.emptyMessage !== null) {
@@ -351,6 +448,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         prompt: trimmedPrompt,
         cooldownIds,
         source: source.selection,
+        ...(surpriseMe ? { exploration: EXPLORATION_STRENGTH } : {}),
       });
       const response = await fetchRecommendations(request);
 
@@ -361,12 +459,22 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         round: {
           requestId: currentRequestId,
           movies: response.movies,
-          intent: { tasteVector, prompt: trimmedPrompt, source: sourceKind },
+          intent: {
+            tasteVector,
+            prompt: trimmedPrompt,
+            source: sourceKind,
+            candidateIds: source.selection.kind === 'paste' ? source.selection.candidateIds : null,
+          },
         },
       });
     } catch (error) {
       setState({ status: 'error', message: errorMessage(error) });
     }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitRound();
   }
 
   /**
@@ -398,7 +506,11 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
-      const source = await resolveSourceSelection(profile, round.intent.source);
+      const source = await resolveSourceSelection(
+        profile,
+        round.intent.source,
+        round.intent.candidateIds,
+      );
 
       if (source.emptyMessage !== null) {
         setAction({ status: 'error', message: source.emptyMessage });
@@ -414,6 +526,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         replacedMovieId: movie.id,
         cooldownIds,
         source: source.selection,
+        ...(surpriseMe ? { exploration: EXPLORATION_STRENGTH } : {}),
       });
       const response = await fetchRecommendations(request);
 
@@ -459,7 +572,11 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         profile.getWatchedIds(),
         profile.getActiveCooldownIds(),
       ]);
-      const source = await resolveSourceSelection(profile, round.intent.source);
+      const source = await resolveSourceSelection(
+        profile,
+        round.intent.source,
+        round.intent.candidateIds,
+      );
 
       if (source.emptyMessage !== null) {
         setAction({ status: 'error', message: source.emptyMessage });
@@ -474,6 +591,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         visibleMovieIds: round.movies.map((pick) => pick.id),
         cooldownIds,
         source: source.selection,
+        ...(surpriseMe ? { exploration: EXPLORATION_STRENGTH } : {}),
       });
       const response = await fetchRecommendations(request);
 
@@ -518,8 +636,97 @@ export function App({ profile: providedProfile }: AppProps = {}) {
                 {option.label}
               </label>
             ))}
+            <label className="source-picker__option source-picker__option--toggle">
+              <input
+                type="checkbox"
+                checked={surpriseMe}
+                disabled={controlsDisabled}
+                onChange={(event) => setSurpriseMe(event.target.checked)}
+              />
+              Surprise me
+            </label>
           </div>
         </fieldset>
+
+        {sourceKind === 'paste' && (
+          <section className="list-paste" aria-label="Pasted list">
+            <label htmlFor="list-paste">Paste a list — one film per line</label>
+            <textarea
+              id="list-paste"
+              rows={6}
+              value={pastedList}
+              placeholder={'Heat (1995)\nIn the Mood for Love\nAlien, 1979'}
+              onChange={(event) => setPastedList(event.target.value)}
+            />
+            <div className="list-paste__actions">
+              <button
+                type="button"
+                disabled={controlsDisabled}
+                onClick={() => {
+                  void submitRound();
+                }}
+              >
+                Use this list
+              </button>
+              <p className="list-paste__hint">
+                One film per line, or paste Letterboxd CSV rows. Ratings are ignored for this
+                source.
+              </p>
+            </div>
+
+            {pasteError !== null && <p className="status status--error">{pasteError}</p>}
+
+            {pasteReport !== null && (
+              <div className="import__report">
+                {pasteReport.matched > 0 && (
+                  <p className="status import__status">
+                    {`Matched ${String(pasteReport.matched)} of ${String(
+                      pasteReport.matched + pasteReport.unmatched.length,
+                    )} ${
+                      pasteReport.matched + pasteReport.unmatched.length === 1 ? 'film' : 'films'
+                    } from your list.`}
+                  </p>
+                )}
+
+                {pasteReport.unmatched.length > 0 && (
+                  <details className="import__unmatched">
+                    <summary>
+                      Not in the catalog:{' '}
+                      {pasteReport.unmatched.length === 1
+                        ? '1 film'
+                        : `${String(pasteReport.unmatched.length)} films`}
+                    </summary>
+                    <ul className="import__list">
+                      {pasteReport.unmatched.map((unmatched) => (
+                        <li key={`${unmatched.name}\u0000${String(unmatched.year ?? '')}`}>
+                          {unmatched.year === null
+                            ? unmatched.name
+                            : `${unmatched.name} (${String(unmatched.year)})`}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                {pasteReport.unparseable.length > 0 && (
+                  <details className="import__unmatched">
+                    <summary>
+                      Could not read:{' '}
+                      {pasteReport.unparseable.length === 1
+                        ? '1 line'
+                        : `${String(pasteReport.unparseable.length)} lines`}
+                    </summary>
+                    <ul className="import__list">
+                      {pasteReport.unparseable.map((line, index) => (
+                        <li key={`${String(index)}:${line}`}>{line}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         <label htmlFor="prompt">What are you in the mood for?</label>
         <div className="prompt-form__controls">

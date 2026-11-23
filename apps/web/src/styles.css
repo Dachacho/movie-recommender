@@ -106,6 +106,48 @@ body {
   color: var(--paper);
 }
 
+.prompt-form .source-picker__option--toggle {
+  margin-left: auto;
+}
+
+.list-paste {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.list-paste textarea {
+  min-height: 8.5rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--ink-line);
+  border-radius: 2px;
+  background: var(--ink-raised);
+  color: var(--paper);
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.list-paste textarea::placeholder {
+  color: var(--slate);
+  opacity: 0.6;
+}
+
+.list-paste__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: center;
+}
+
+.list-paste__hint {
+  max-width: 36ch;
+  margin: 0;
+  color: var(--slate);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 .prompt-form__controls {
   display: flex;
   flex-wrap: wrap;

@@ -2,6 +2,7 @@ import type { MovieCard } from '@movie-recommender/shared';
 import { describe, expect, it } from 'vitest';
 import {
   COOLDOWN_MS,
+  EXPLORATION_STRENGTH,
   MAX_CANDIDATE_IDS,
   MAX_EXCLUDE_IDS,
   buildRecommendationInput,
@@ -613,5 +614,44 @@ describe('mergeReplacement', () => {
 describe('COOLDOWN_MS', () => {
   it('is seven days in milliseconds', () => {
     expect(COOLDOWN_MS).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe('paste source', () => {
+  it('uses the list source with the usual rated and watched exclusions', () => {
+    const { request } = buildRecommendationInput({
+      ...BASE,
+      ratedIds: [1],
+      watchedIds: [2],
+      source: { kind: 'paste', candidateIds: [3, 4] },
+    });
+
+    expect(request).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [3, 4],
+      excludeIds: [1, 2],
+    });
+  });
+});
+
+describe('exploration', () => {
+  it('omits exploration when it is not supplied', () => {
+    const { request } = buildRecommendationInput({ ...BASE });
+
+    expect(request).not.toHaveProperty('exploration');
+  });
+
+  it('sends the supplied exploration value', () => {
+    const { request } = buildRecommendationInput({
+      ...BASE,
+      exploration: EXPLORATION_STRENGTH,
+    });
+
+    expect(request).toMatchObject({ exploration: 0.5 });
+  });
+
+  it('pins the interim surprise strength at one half', () => {
+    expect(EXPLORATION_STRENGTH).toBe(0.5);
   });
 });

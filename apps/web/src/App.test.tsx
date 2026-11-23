@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import type { MovieCard } from '@movie-recommender/shared';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { App } from './App';
+import { LIST_PASTE_TOO_LONG_MESSAGE } from './listPaste';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
 import { MAX_CANDIDATE_IDS, MAX_EXCLUDE_IDS } from './recommendationInput';
@@ -157,6 +158,31 @@ const TASTE_VECTOR = Array.from({ length: 384 }, (_value, index) => (index === 0
 
 function createProfile(): GuestProfile {
   return new GuestProfile(new MemoryGuestProfileStorage());
+}
+
+function getPasteInput(): HTMLTextAreaElement {
+  return screen.getByLabelText('Paste a list — one film per line') as HTMLTextAreaElement;
+}
+
+function importResponse(
+  matchedIds: readonly number[],
+  unmatched: readonly { name: string; year: number | null }[] = [],
+): Response {
+  return jsonResponse({
+    matched: matchedIds.map((movieId) => ({
+      movieId,
+      title: `Movie ${String(movieId)}`,
+      releaseYear: null,
+      rating: null,
+    })),
+    unmatched: unmatched.map((film) => ({ ...film, reason: 'no_match' })),
+    stats: {
+      rows: matchedIds.length + unmatched.length,
+      matched: matchedIds.length,
+      unmatched: unmatched.length,
+      invalid: 0,
+    },
+  });
 }
 
 function renderApp(profile: GuestProfile = createProfile()): ReturnType<typeof render> {
@@ -1397,5 +1423,168 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('imports a pasted list and requests recommendations from its matched films', async () => {
+    const fetchMock = stubFetch();
+    const pasted = 'Heat (1995)\nThe Lighthouse\nNot A Film, 2001';
+
+    fetchMock.mockImplementation(async (input) => {
+      if (input === '/api/imports/letterboxd') {
+        return importResponse([3, 7], [{ name: 'Not A Film', year: 2001 }]);
+      }
+
+      return jsonResponse({ movies: [HEAT], coldStart: false });
+    });
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.change(getPasteInput(), { target: { value: pasted } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+
+    expect(await screen.findByText('Matched 2 of 3 films from your list.')).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/imports/letterboxd');
+    expect(submittedBody(fetchMock, 0)).toEqual({
+      csv: 'Date,Name,Year,Letterboxd URI\n,Heat,1995,\n,The Lighthouse,,\n,Not A Film,2001,',
+    });
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/recommendations');
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [3, 7],
+    });
+    expect(await screen.findByRole('heading', { name: 'Heat' })).toBeTruthy();
+
+    const unmatchedSummary = screen.getByText('Not in the catalog: 1 film');
+    expect(unmatchedSummary.closest('details')?.open).toBe(false);
+    fireEvent.click(unmatchedSummary);
+    expect(screen.getByText('Not A Film (2001)')).toBeTruthy();
+
+    // The paste stays available for the rest of the session.
+    selectSource('The whole catalog');
+    selectSource("A list I'll paste");
+    expect(getPasteInput().value).toBe(pasted);
+  });
+
+  it('shows pasted lines it cannot read and recommends from the rest', async () => {
+    const fetchMock = stubFetch();
+
+    fetchMock.mockImplementation(async (input) => {
+      if (input === '/api/imports/letterboxd') {
+        return importResponse([3]);
+      }
+
+      return jsonResponse({ movies: [HEAT], coldStart: false });
+    });
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.change(getPasteInput(), { target: { value: 'Heat\n—' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+
+    expect(await screen.findByText('Matched 1 of 1 film from your list.')).toBeTruthy();
+
+    const unparseableSummary = screen.getByText('Could not read: 1 line');
+    fireEvent.click(unparseableSummary);
+    expect(screen.getByText('—')).toBeTruthy();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [3],
+    });
+  });
+
+  it('shows the paste empty state and skips recommendations when nothing matched', async () => {
+    const fetchMock = stubFetch();
+
+    fetchMock.mockResolvedValue(importResponse([], [{ name: 'Sátántangó', year: 1994 }]));
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.change(getPasteInput(), { target: { value: 'Sátántangó, 1994' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+
+    expect(await screen.findByText('No films from that list are in the catalog yet.')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/imports/letterboxd');
+    expect(screen.getByText('Sátántangó (1994)')).toBeTruthy();
+  });
+
+  it('keeps a pasted round on the pool its import matched', async () => {
+    const fetchMock = stubFetch();
+
+    fetchMock
+      .mockResolvedValueOnce(importResponse([3, 6, 7]))
+      .mockResolvedValueOnce(jsonResponse({ movies: [HEAT, SICARIO], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [THE_LIGHTHOUSE], coldStart: false }));
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.change(getPasteInput(), { target: { value: 'Heat\nSicario\nThe Lighthouse' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+    await screen.findByRole('heading', { name: 'Sicario' });
+
+    // Changing the textarea must not change a round that is already running.
+    fireEvent.change(getPasteInput(), { target: { value: 'Alien, 1979' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Heat: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'The Lighthouse' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(submittedBody(fetchMock, 2)).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [3, 6, 7],
+      excludeIds: [3, 6],
+    });
+
+    const importCalls = fetchMock.mock.calls.filter(
+      ([input]) => input === '/api/imports/letterboxd',
+    );
+    expect(importCalls).toHaveLength(1);
+  });
+
+  it('rejects a paste beyond the import size limit without calling the API', async () => {
+    const fetchMock = stubFetch();
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.change(getPasteInput(), { target: { value: 'x'.repeat(200_001) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+
+    expect(await screen.findByText(LIST_PASTE_TOO_LONG_MESSAGE)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('asks for a list when Use this list is pressed with an empty textarea', async () => {
+    const fetchMock = stubFetch();
+
+    renderApp();
+    selectSource("A list I'll paste");
+    fireEvent.click(screen.getByRole('button', { name: 'Use this list' }));
+
+    expect(await screen.findByText('Paste a list first — one film per line.')).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends exploration 0.5 when Surprise me is on', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL], coldStart: false }));
+
+    renderApp();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Surprise me' }));
+    await submitPrompt('  something strange  ');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submittedBody(fetchMock)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      prompt: 'something strange',
+      exploration: 0.5,
+    });
   });
 });

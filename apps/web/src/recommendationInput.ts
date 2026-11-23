@@ -13,15 +13,24 @@ export const MAX_CANDIDATE_IDS = 10_000;
 export const REWATCH_MIN_RATING = 4;
 
 /**
- * Where a round's picks come from. `rewatch` is a guest-facing source that
- * rides the API's `list` source: its candidates are films the guest rated.
+ * Interim "Surprise me" strength, pending held-out evaluation. The API scales
+ * taste similarity by `1 - exploration`, so 0.5 halves taste against the
+ * reception tilt without touching hard filters.
  */
-export type RecommendationSourceKind = 'catalog' | 'watchlist' | 'rewatch';
+export const EXPLORATION_STRENGTH = 0.5;
+
+/**
+ * Where a round's picks come from. `rewatch` and `paste` are guest-facing
+ * sources that ride the API's `list` source: rewatch candidates are the
+ * guest's rated films, paste candidates are the imported list's matches.
+ */
+export type RecommendationSourceKind = 'catalog' | 'watchlist' | 'rewatch' | 'paste';
 
 export type SourceSelection =
   | { kind: 'catalog' }
   | { kind: 'watchlist'; candidateIds: readonly number[] }
-  | { kind: 'rewatch'; candidateIds: readonly number[] };
+  | { kind: 'rewatch'; candidateIds: readonly number[] }
+  | { kind: 'paste'; candidateIds: readonly number[] };
 
 interface RequestBase {
   /**
@@ -35,6 +44,8 @@ interface RequestBase {
   prompt: string;
   /** Defaults to the catalog. Pool sources carry their own candidate ids. */
   source?: SourceSelection;
+  /** Omitted unless the guest turned on "Surprise me". */
+  exploration?: number;
 }
 
 export interface RoundRequestInput extends RequestBase {
@@ -73,6 +84,8 @@ function requestSource(source: SourceSelection): RecommendationRequest['source']
     case 'watchlist':
       return 'watchlist';
     case 'rewatch':
+      return 'list';
+    case 'paste':
       return 'list';
   }
 }
@@ -174,6 +187,7 @@ function buildRequest(
       ...(trimmedPrompt === '' ? {} : { prompt: trimmedPrompt }),
       ...(tasteVector === null ? {} : { tasteVector: [...tasteVector] }),
       ...(excludeIds.length === 0 ? {} : { excludeIds }),
+      ...(base.exploration === undefined ? {} : { exploration: base.exploration }),
     },
     droppedIds: [...droppedIds].sort((left, right) => left - right),
     poolDroppedIds,
