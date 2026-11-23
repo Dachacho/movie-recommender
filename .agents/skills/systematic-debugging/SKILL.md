@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes
+description: Use when encountering an unexpected bug, failing test or unexpected behavior, before proposing fixes. Do not use for an intentional red test written under test-driven-development; that failure is expected.
 ---
 
 # Systematic Debugging
