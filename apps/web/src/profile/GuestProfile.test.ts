@@ -1,5 +1,6 @@
 import { tasteRequestSchema } from '@movie-recommender/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { COOLDOWN_MS } from '../recommendationInput';
 import { GuestProfile, GuestProfileValidationError } from './GuestProfile';
 import { MemoryGuestProfileStorage } from './memoryStorage';
 
@@ -213,6 +214,180 @@ describe('GuestProfile', () => {
     await profile.hasRatings();
 
     expect(profile.getVersion()).toBe(6);
+  });
+
+  it('stores a cooldown that expires seven days after the write', async () => {
+    const { profile } = setup({ now: () => 1_700_000_000_000 });
+
+    await expect(profile.setCooldown(42)).resolves.toEqual({
+      movieId: 42,
+      expiresAt: 1_700_000_000_000 + COOLDOWN_MS,
+    });
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([42]);
+  });
+
+  it('extends an existing cooldown instead of duplicating it', async () => {
+    let now = 1_000;
+    const { profile } = setup({ now: () => now });
+
+    await profile.setCooldown(42);
+    now = 2_000;
+    await profile.setCooldown(42);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([42]);
+    await expect(profile.cooldownsCount()).resolves.toBe(1);
+  });
+
+  it('returns only unexpired cooldowns, sorted ascending', async () => {
+    const now = 10_000;
+    const { profile, storage } = setup({ now: () => now });
+
+    storage.seedCooldowns([
+      { movieId: 9, expiresAt: now + 10 },
+      { movieId: 3, expiresAt: now + 1 },
+      { movieId: 4, expiresAt: now },
+      { movieId: 5, expiresAt: now - 1 },
+    ]);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([3, 9]);
+  });
+
+  it('skips malformed cooldown records and invalid movie ids', async () => {
+    const now = 10_000;
+    const { profile, storage } = setup({ now: () => now });
+
+    storage.seedCooldowns([
+      null,
+      { movieId: 'not-a-number', expiresAt: now + 1 },
+      { movieId: 6, expiresAt: -1 },
+      { movieId: 7.5, expiresAt: now + 1 },
+      { movieId: 8, expiresAt: now + 1 },
+    ]);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([8]);
+
+    await expect(profile.setCooldown(0)).rejects.toBeInstanceOf(GuestProfileValidationError);
+    await expect(profile.setCooldown(1.5)).rejects.toBeInstanceOf(GuestProfileValidationError);
+    await expect(profile.removeCooldown(-1)).rejects.toBeInstanceOf(GuestProfileValidationError);
+  });
+
+  it('removes a cooldown before it expires', async () => {
+    const { profile } = setup({ now: () => 1_000 });
+
+    await profile.setCooldown(42);
+    await profile.removeCooldown(42);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+    await expect(profile.hasCooldowns()).resolves.toBe(false);
+  });
+
+  it('counts only active, unique cooldowns', async () => {
+    const now = 5_000;
+    const { profile, storage } = setup({ now: () => now });
+
+    storage.seedCooldowns([
+      { movieId: 1, expiresAt: now + 1 },
+      { movieId: 1, expiresAt: now + 2 },
+      { movieId: 2, expiresAt: now + 1 },
+      { movieId: 3, expiresAt: now },
+    ]);
+
+    await expect(profile.cooldownsCount()).resolves.toBe(2);
+    await expect(profile.hasCooldowns()).resolves.toBe(true);
+  });
+
+  it('writes a batch of cooldowns in one storage operation with one shared expiry', async () => {
+    const { profile, storage } = setup({ now: () => 1_000 });
+    const batchSpy = vi.spyOn(storage, 'writeCooldowns');
+    const singleSpy = vi.spyOn(storage, 'writeCooldown');
+
+    const records = [
+      { movieId: 1, expiresAt: 1_000 + COOLDOWN_MS },
+      { movieId: 2, expiresAt: 1_000 + COOLDOWN_MS },
+      { movieId: 4, expiresAt: 1_000 + COOLDOWN_MS },
+    ];
+
+    await expect(profile.setCooldowns([4, 1, 2, 1])).resolves.toEqual(records);
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(batchSpy).toHaveBeenCalledWith(records);
+    expect(singleSpy).not.toHaveBeenCalled();
+    expect(profile.getVersion()).toBe(1);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([1, 2, 4]);
+  });
+
+  it('writes no cooldown records when one movie id in a batch is invalid', async () => {
+    const { profile } = setup({ now: () => 1_000 });
+
+    await expect(profile.setCooldowns([1, 0])).rejects.toBeInstanceOf(GuestProfileValidationError);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+    expect(profile.getVersion()).toBe(0);
+  });
+
+  it('ignores an empty cooldown batch', async () => {
+    const { profile } = setup({ now: () => 1_000 });
+
+    await expect(profile.setCooldowns([])).resolves.toEqual([]);
+    expect(profile.getVersion()).toBe(0);
+  });
+
+  it('replaces an existing cooldown row when a batch includes its movie id', async () => {
+    let now = 1_000;
+    const { profile } = setup({ now: () => now });
+
+    await profile.setCooldown(1);
+    now = 2_000;
+    await profile.setCooldowns([1, 2]);
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([1, 2]);
+    await expect(profile.cooldownsCount()).resolves.toBe(2);
+  });
+
+  it('bumps its version when a cooldown is written or removed', async () => {
+    const { profile } = setup({ now: () => 1_000 });
+
+    await profile.setCooldown(1);
+    expect(profile.getVersion()).toBe(1);
+
+    await profile.removeCooldown(1);
+    expect(profile.getVersion()).toBe(2);
+
+    await profile.getActiveCooldownIds();
+    await profile.cooldownsCount();
+    await profile.hasCooldowns();
+
+    expect(profile.getVersion()).toBe(2);
+  });
+
+  it('returns every rated movie id, beyond the 500-entry taste payload cap', async () => {
+    const { profile, storage } = setup();
+    const rows = Array.from({ length: 600 }, (_value, index) => ({
+      movieId: index + 1,
+      rating: 4,
+      updatedAt: index,
+    }));
+
+    storage.seedRatings(rows);
+
+    await expect(profile.getRatedIds()).resolves.toEqual(
+      Array.from({ length: 600 }, (_value, index) => index + 1),
+    );
+    await expect(profile.ratingsPayload()).resolves.toHaveLength(500);
+  });
+
+  it('returns rated ids deduplicated, sorted and without malformed records', async () => {
+    const { profile, storage } = setup();
+
+    storage.seedRatings([
+      { movieId: 9, rating: 4, updatedAt: 1 },
+      { movieId: 2, rating: 3, updatedAt: 1 },
+      { movieId: 9, rating: 5, updatedAt: 2 },
+      { movieId: 'bad', rating: 3, updatedAt: 1 },
+      null,
+    ]);
+
+    await expect(profile.getRatedIds()).resolves.toEqual([2, 9]);
   });
 
   it('counts only valid, unique ratings', async () => {

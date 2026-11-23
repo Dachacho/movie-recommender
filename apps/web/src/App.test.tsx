@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { App } from './App';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
+import { MAX_EXCLUDE_IDS } from './recommendationInput';
+
+const TRIM_NOTICE =
+  'Your library is larger than a single request can exclude — the oldest entries may occasionally reappear.';
 
 afterEach(() => {
   cleanup();
@@ -75,6 +79,32 @@ const BROKEN_POSTER: MovieCard = {
   cast: [],
   posterPath: '/broken-poster.jpg',
   voteAverage: 6.5,
+};
+
+const SICARIO: MovieCard = {
+  id: 6,
+  title: 'Sicario',
+  releaseYear: 2015,
+  runtime: 121,
+  overview: 'An idealistic FBI agent is enlisted by a government task force.',
+  genres: ['Thriller', 'Drama'],
+  director: 'Denis Villeneuve',
+  cast: ['Emily Blunt'],
+  posterPath: '/sicario.jpg',
+  voteAverage: 7.3,
+};
+
+const THE_LIGHTHOUSE: MovieCard = {
+  id: 7,
+  title: 'The Lighthouse',
+  releaseYear: 2019,
+  runtime: 109,
+  overview: 'Two lighthouse keepers try to maintain their sanity.',
+  genres: ['Drama', 'Horror'],
+  director: 'Robert Eggers',
+  cast: ['Robert Pattinson'],
+  posterPath: '/lighthouse.jpg',
+  voteAverage: 7.2,
 };
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -731,5 +761,399 @@ describe('App', () => {
     ).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/taste');
+  });
+
+  it('excludes active cooldowns from a new round but not expired ones', async () => {
+    const now = 1_700_000_000_000;
+    const storage = new MemoryGuestProfileStorage();
+    const profile = new GuestProfile(storage, { now: () => now });
+    const fetchMock = stubFetch();
+
+    storage.seedCooldowns([
+      { movieId: 90, expiresAt: now + 1 },
+      { movieId: 91, expiresAt: now },
+    ]);
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submittedBody(fetchMock)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      excludeIds: [90],
+    });
+  });
+
+  it('replaces one alternative in place and records its cooldown', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'Sicario' })).toBeTruthy();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      excludeIds: [1, 2, 3, 4],
+    });
+
+    const mainPick = screen.getByRole('article', { name: 'Main pick' });
+    expect(within(mainPick).getByRole('heading', { name: 'Arrival' })).toBeTruthy();
+
+    const alternatives = screen.getByRole('list', { name: 'Alternatives' });
+    expect(
+      within(alternatives)
+        .getAllByRole('heading', { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(['Sicario', 'Heat', 'Paddington 2']);
+    expect(screen.queryByText('Moonlight')).toBeNull();
+    expect(screen.queryByText(TRIM_NOTICE)).toBeNull();
+
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([2]);
+  });
+
+  it('refreshes all picks, cooling every visible one', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const setCooldowns = vi.spyOn(profile, 'setCooldowns');
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO, THE_LIGHTHOUSE], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(await screen.findByRole('heading', { name: 'Sicario' })).toBeTruthy();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      excludeIds: [1, 2, 3, 4],
+    });
+
+    const mainPick = screen.getByRole('article', { name: 'Main pick' });
+    expect(within(mainPick).getByRole('heading', { name: 'Sicario' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'The Lighthouse' })).toBeTruthy();
+    expect(screen.queryByText('Arrival')).toBeNull();
+
+    expect(setCooldowns).toHaveBeenCalledTimes(1);
+    expect(setCooldowns).toHaveBeenCalledWith([1, 2, 3, 4]);
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([1, 2, 3, 4]);
+  });
+
+  it('excludes films rated or watched after the round from a replacement', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    await profile.setRating(HEAT.id, 4);
+    await profile.setWatched(8);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+    await screen.findByRole('heading', { name: 'Sicario' });
+
+    expect(submittedBody(fetchMock, 1)).toEqual({
+      source: 'catalog',
+      limit: 4,
+      excludeIds: [1, 2, 3, 4, 8],
+    });
+  });
+
+  it('excludes rated ids beyond the 500-entry taste payload from a replacement', async () => {
+    const storage = new MemoryGuestProfileStorage();
+    const profile = new GuestProfile(storage);
+    const fetchMock = stubFetch();
+
+    storage.seedRatings(
+      Array.from({ length: 600 }, (_value, index) => ({
+        movieId: index + 1,
+        rating: 4,
+        updatedAt: index,
+      })),
+    );
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+    await screen.findByRole('heading', { name: 'Sicario' });
+
+    expect(submittedBody(fetchMock, 2)).toMatchObject({
+      excludeIds: Array.from({ length: 600 }, (_value, index) => index + 1),
+    });
+  });
+
+  it('keeps the picks and writes no cooldown when a refresh fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              code: 'unknown_error',
+              message: 'The recommendation service could not complete the request. Try again.',
+            },
+          },
+          500,
+        ),
+      );
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(
+      await screen.findByText(
+        'The recommendation service could not complete the request. Try again.',
+      ),
+    ).toBeTruthy();
+
+    const mainPick = screen.getByRole('article', { name: 'Main pick' });
+    expect(within(mainPick).getByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    const alternatives = screen.getByRole('list', { name: 'Alternatives' });
+    expect(within(alternatives).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(alternatives).getByText('Moonlight')).toBeTruthy();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+    expect(
+      (screen.getByRole('button', { name: 'Refresh all' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it('keeps the picks and writes nothing when the refresh batch write fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const setCooldowns = vi
+      .spyOn(profile, 'setCooldowns')
+      .mockRejectedValue(new Error('Quota exceeded'));
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO, THE_LIGHTHOUSE], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(
+      await screen.findByText('Could not refresh the picks. Your picks are unchanged.'),
+    ).toBeTruthy();
+
+    expect(setCooldowns).toHaveBeenCalledTimes(1);
+    expect(setCooldowns).toHaveBeenCalledWith([1, 2, 3, 4]);
+
+    const mainPick = screen.getByRole('article', { name: 'Main pick' });
+    expect(within(mainPick).getByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    const alternatives = screen.getByRole('list', { name: 'Alternatives' });
+    expect(within(alternatives).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(alternatives).getByText('Moonlight')).toBeTruthy();
+    expect(screen.queryByText('Sicario')).toBeNull();
+    expect(screen.queryByText('The Lighthouse')).toBeNull();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+  });
+
+  it('shows a quiet notice when a replacement trims the exclusion set', async () => {
+    const storage = new MemoryGuestProfileStorage();
+    const profile = new GuestProfile(storage);
+    const fetchMock = stubFetch();
+
+    storage.seedRatings(
+      Array.from({ length: 10_004 }, (_value, index) => ({
+        movieId: index + 1,
+        rating: 4,
+        updatedAt: index,
+      })),
+    );
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ tasteVector: TASTE_VECTOR }))
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'Sicario' })).toBeTruthy();
+    expect(screen.getByText(TRIM_NOTICE)).toBeTruthy();
+
+    const excludeIds = submittedBody(fetchMock, 2).excludeIds as number[];
+
+    expect(excludeIds).toHaveLength(MAX_EXCLUDE_IDS);
+    expect(excludeIds).toContain(10_000);
+  });
+
+  it('keeps the picks and writes no cooldown when a replacement fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              code: 'unknown_error',
+              message: 'The recommendation service could not complete the request. Try again.',
+            },
+          },
+          500,
+        ),
+      );
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+
+    expect(
+      await screen.findByText(
+        'The recommendation service could not complete the request. Try again.',
+      ),
+    ).toBeTruthy();
+
+    const alternatives = screen.getByRole('list', { name: 'Alternatives' });
+    expect(within(alternatives).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(alternatives).getByText('Moonlight')).toBeTruthy();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([]);
+
+    const moonNightButton = screen.getByRole('button', { name: 'Moonlight: not tonight' });
+    expect((moonNightButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('removes the slot when a replacement returns no movie', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Heat: not tonight' }));
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('list', { name: 'Alternatives' })).getAllByRole('listitem'),
+      ).toHaveLength(2),
+    );
+    expect(screen.queryByText('Heat')).toBeNull();
+    expect(screen.getByRole('article', { name: 'Main pick' })).toBeTruthy();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([3]);
+  });
+
+  it('shows a single pick without alternatives and handles its replacement', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('article', { name: 'Main pick' });
+
+    expect(screen.queryByRole('list', { name: 'Alternatives' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh all' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    expect(await screen.findByText('No picks tonight. Try a different direction.')).toBeTruthy();
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([1]);
+  });
+
+  it('blocks other pick actions while a replacement is in flight', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockReturnValueOnce(new Promise<Response>(() => undefined));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const pendingButton = screen.getByRole('button', { name: 'Moonlight: not tonight' });
+    expect((pendingButton as HTMLButtonElement).disabled).toBe(true);
+    expect(pendingButton.textContent).toBe('Finding another…');
+
+    const heatButton = screen.getByRole('button', { name: 'Heat: not tonight' });
+    expect((heatButton as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Refresh all' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.click(heatButton);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

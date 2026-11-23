@@ -1,5 +1,5 @@
 import type { GuestProfileDB } from './db';
-import type { RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
+import type { CooldownRecord, RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
 
 /**
  * Narrow persistence boundary for the guest profile. Reads return `unknown`
@@ -16,6 +16,11 @@ export interface GuestProfileStorage {
   readWatchlist(): Promise<unknown[]>;
   writeWatchlist(record: WatchlistRecord): Promise<void>;
   deleteWatchlist(movieId: number): Promise<void>;
+  readCooldowns(): Promise<unknown[]>;
+  writeCooldown(record: CooldownRecord): Promise<void>;
+  /** Writes the whole batch as one storage operation, so it cannot half-succeed. */
+  writeCooldowns(records: CooldownRecord[]): Promise<void>;
+  deleteCooldown(movieId: number): Promise<void>;
 }
 
 export function createDexieStorage(db: GuestProfileDB): GuestProfileStorage {
@@ -35,5 +40,13 @@ export function createDexieStorage(db: GuestProfileDB): GuestProfileStorage {
       await db.watchlist.put(record);
     },
     deleteWatchlist: (movieId) => db.watchlist.delete(movieId),
+    readCooldowns: () => db.cooldowns.toArray(),
+    writeCooldown: async (record) => {
+      await db.cooldowns.put(record);
+    },
+    writeCooldowns: async (records) => {
+      await db.cooldowns.bulkPut(records);
+    },
+    deleteCooldown: (movieId) => db.cooldowns.delete(movieId),
   };
 }

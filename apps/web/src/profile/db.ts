@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
+import type { CooldownRecord, RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
 
 const DEFAULT_GUEST_PROFILE_DB_NAME = 'movie-recommender-guest-profile';
 
@@ -11,6 +11,7 @@ export class GuestProfileDB extends Dexie {
   ratings!: Table<RatingRecord, number>;
   watched!: Table<WatchedRecord, number>;
   watchlist!: Table<WatchlistRecord, number>;
+  cooldowns!: Table<CooldownRecord, number>;
 
   constructor(name: string = DEFAULT_GUEST_PROFILE_DB_NAME) {
     super(name);
@@ -18,6 +19,14 @@ export class GuestProfileDB extends Dexie {
       ratings: 'movieId, updatedAt',
       watched: 'movieId, watchedAt',
       watchlist: 'movieId, addedAt',
+    });
+    // Version 2 adds cooldowns. Dexie keeps the existing tables across
+    // versions; they are re-declared here so the schema stays readable.
+    this.version(2).stores({
+      ratings: 'movieId, updatedAt',
+      watched: 'movieId, watchedAt',
+      watchlist: 'movieId, addedAt',
+      cooldowns: 'movieId, expiresAt',
     });
   }
 }

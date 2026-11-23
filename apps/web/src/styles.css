@@ -126,6 +126,43 @@ body {
   color: var(--paper);
 }
 
+.pick-round__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+  margin-bottom: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.pick-action {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--ink-line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--slate);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pick-action:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.pick-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.main-pick__actions {
+  margin-top: clamp(1.5rem, 3vw, 2rem);
+}
+
+.alternative__actions {
+  margin-top: 0.6rem;
+}
+
 .picks {
   display: grid;
   gap: clamp(2.75rem, 6vw, 4rem);

@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import type { MovieCard, RecommendationResponse } from '@movie-recommender/shared';
+import type { MovieCard } from '@movie-recommender/shared';
 import {
   RecommendationApiError,
   RecommendationNetworkError,
@@ -9,12 +9,39 @@ import {
 } from './api';
 import { Library } from './Library';
 import { createGuestProfile, type GuestProfile, type RatingsPayload } from './profile/GuestProfile';
-import { buildRecommendationInput } from './recommendationInput';
+import {
+  buildRecommendationInput,
+  buildRefreshAllInput,
+  buildReplacementInput,
+  mergeReplacement,
+} from './recommendationInput';
+
+/**
+ * The intent a round was drawn with. The taste vector and prompt stay pinned
+ * to the round; hard exclusions are always re-read from the profile so films
+ * rated or watched while the picks are on screen are never suggested.
+ */
+interface RoundIntent {
+  tasteVector: TasteVector;
+  prompt: string;
+}
+
+interface PickRound {
+  requestId: number;
+  movies: MovieCard[];
+  intent: RoundIntent;
+}
 
 type ScreenState =
   | { status: 'idle' }
   | { status: 'pending' }
-  | { status: 'results'; requestId: number; response: RecommendationResponse }
+  | { status: 'results'; round: PickRound }
+  | { status: 'error'; message: string };
+
+type ActionState =
+  | { status: 'idle' }
+  | { status: 'pending'; kind: 'replace'; index: number }
+  | { status: 'pending'; kind: 'refresh' }
   | { status: 'error'; message: string };
 
 interface TasteCache {
@@ -28,6 +55,11 @@ export interface AppProps {
 }
 
 const POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w500';
+
+const REPLACE_ERROR_MESSAGE = 'Could not find another movie. Your picks are unchanged.';
+const REFRESH_ERROR_MESSAGE = 'Could not refresh the picks. Your picks are unchanged.';
+const EXCLUSION_TRIM_NOTICE =
+  'Your library is larger than a single request can exclude — the oldest entries may occasionally reappear.';
 
 async function tasteVectorFor(
   ratings: RatingsPayload,
@@ -61,6 +93,14 @@ function errorMessage(error: unknown): string {
   return 'Something went wrong while finding a movie. Try again.';
 }
 
+function actionErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof RecommendationApiError || error instanceof RecommendationNetworkError) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
 function PosterPlaceholder({ title }: { title: string }) {
   return (
     <div
@@ -91,7 +131,35 @@ function MoviePoster({ movie }: { movie: MovieCard }) {
   );
 }
 
-function MainPick({ movie }: { movie: MovieCard }) {
+interface RejectButtonProps {
+  title: string;
+  disabled: boolean;
+  pending: boolean;
+  onReject: () => void;
+}
+
+function RejectButton({ title, disabled, pending, onReject }: RejectButtonProps) {
+  return (
+    <button
+      type="button"
+      className="pick-action"
+      aria-label={`${title}: not tonight`}
+      disabled={disabled}
+      onClick={onReject}
+    >
+      {pending ? 'Finding another…' : 'Not tonight'}
+    </button>
+  );
+}
+
+interface MainPickProps {
+  movie: MovieCard;
+  disabled: boolean;
+  pending: boolean;
+  onReject: () => void;
+}
+
+function MainPick({ movie, disabled, pending, onReject }: MainPickProps) {
   const facts = [
     movie.releaseYear === null ? null : String(movie.releaseYear),
     movie.director === null ? null : `Directed by ${movie.director}`,
@@ -108,12 +176,29 @@ function MainPick({ movie }: { movie: MovieCard }) {
         {movie.overview !== null && movie.overview !== '' && (
           <p className="main-pick__overview">{movie.overview}</p>
         )}
+        <div className="main-pick__actions">
+          <RejectButton
+            title={movie.title}
+            disabled={disabled}
+            pending={pending}
+            onReject={onReject}
+          />
+        </div>
       </div>
     </article>
   );
 }
 
-function Alternatives({ movies }: { movies: MovieCard[] }) {
+interface AlternativesProps {
+  movies: MovieCard[];
+  /** Index of the first alternative within the round's pick list. */
+  startIndex: number;
+  disabled: boolean;
+  pendingIndex: number | null;
+  onReject: (index: number) => void;
+}
+
+function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: AlternativesProps) {
   if (movies.length === 0) {
     return null;
   }
@@ -122,13 +207,27 @@ function Alternatives({ movies }: { movies: MovieCard[] }) {
     <section className="alternatives">
       <h2 className="alternatives__heading">Also worth a look</h2>
       <ul className="alternatives__list" aria-label="Alternatives">
-        {movies.map((movie) => (
-          <li key={movie.id} className="alternative">
-            <MoviePoster movie={movie} />
-            <h3 className="alternative__title">{movie.title}</h3>
-            {movie.releaseYear !== null && <p className="alternative__year">{movie.releaseYear}</p>}
-          </li>
-        ))}
+        {movies.map((movie, offset) => {
+          const index = startIndex + offset;
+
+          return (
+            <li key={movie.id} className="alternative">
+              <MoviePoster movie={movie} />
+              <h3 className="alternative__title">{movie.title}</h3>
+              {movie.releaseYear !== null && (
+                <p className="alternative__year">{movie.releaseYear}</p>
+              )}
+              <div className="alternative__actions">
+                <RejectButton
+                  title={movie.title}
+                  disabled={disabled}
+                  pending={pendingIndex === index}
+                  onReject={() => onReject(index)}
+                />
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -138,26 +237,34 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
   const [prompt, setPrompt] = useState('');
   const [state, setState] = useState<ScreenState>({ status: 'idle' });
+  const [action, setAction] = useState<ActionState>({ status: 'idle' });
+  const [exclusionTrimmed, setExclusionTrimmed] = useState(false);
   const requestId = useRef(0);
   const tasteCache = useRef<TasteCache | null>(null);
+
+  const actionPending = action.status === 'pending';
+  const pending = state.status === 'pending';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (state.status === 'pending') {
+    if (pending || actionPending) {
       return;
     }
 
     requestId.current += 1;
     const currentRequestId = requestId.current;
 
+    setAction({ status: 'idle' });
     setState({ status: 'pending' });
 
     try {
       const profileVersion = profile.getVersion();
-      const [ratings, watchedIds] = await Promise.all([
+      const [ratings, ratedIds, watchedIds, cooldownIds] = await Promise.all([
         profile.ratingsPayload(),
+        profile.getRatedIds(),
         profile.getWatchedIds(),
+        profile.getActiveCooldownIds(),
       ]);
       const tasteVector = await tasteVectorFor(
         ratings,
@@ -167,16 +274,137 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           tasteCache.current = next;
         },
       );
-      const request = buildRecommendationInput(ratings, watchedIds, tasteVector, prompt);
+      const trimmedPrompt = prompt.trim();
+      const { request, droppedIds } = buildRecommendationInput({
+        ratedIds,
+        watchedIds,
+        tasteVector,
+        prompt: trimmedPrompt,
+        cooldownIds,
+      });
       const response = await fetchRecommendations(request);
 
-      setState({ status: 'results', requestId: currentRequestId, response });
+      setExclusionTrimmed(droppedIds.length > 0);
+      setState({
+        status: 'results',
+        round: {
+          requestId: currentRequestId,
+          movies: response.movies,
+          intent: { tasteVector, prompt: trimmedPrompt },
+        },
+      });
     } catch (error) {
       setState({ status: 'error', message: errorMessage(error) });
     }
   }
 
-  const pending = state.status === 'pending';
+  /**
+   * Cooldowns are written only after the replacement request succeeds, so a
+   * failed fetch leaves both the screen and the profile untouched. A pick the
+   * guest still sees must not be suppressed behind their back.
+   */
+  async function handleReplace(index: number) {
+    if (state.status !== 'results' || actionPending) {
+      return;
+    }
+
+    const round = state.round;
+    const movie = round.movies[index];
+
+    if (movie === undefined) {
+      return;
+    }
+
+    setAction({ status: 'pending', kind: 'replace', index });
+
+    try {
+      // The library stays usable while picks are shown, so exclusions are
+      // re-read now: the round's taste vector and prompt stay pinned, but a
+      // film rated or watched since then must not come back as a replacement.
+      // Rated ids come from the uncapped set, not the 500-entry taste payload.
+      const [ratedIds, watchedIds, cooldownIds] = await Promise.all([
+        profile.getRatedIds(),
+        profile.getWatchedIds(),
+        profile.getActiveCooldownIds(),
+      ]);
+      const { request, droppedIds } = buildReplacementInput({
+        ratedIds,
+        watchedIds,
+        tasteVector: round.intent.tasteVector,
+        prompt: round.intent.prompt,
+        visibleMovieIds: round.movies.map((pick) => pick.id),
+        replacedMovieId: movie.id,
+        cooldownIds,
+      });
+      const response = await fetchRecommendations(request);
+
+      await profile.setCooldown(movie.id);
+
+      setExclusionTrimmed(droppedIds.length > 0);
+      setState((previous) =>
+        previous.status === 'results'
+          ? {
+              status: 'results',
+              round: {
+                ...previous.round,
+                movies: mergeReplacement(previous.round.movies, index, response.movies),
+              },
+            }
+          : previous,
+      );
+      setAction({ status: 'idle' });
+    } catch (error) {
+      setAction({ status: 'error', message: actionErrorMessage(error, REPLACE_ERROR_MESSAGE) });
+    }
+  }
+
+  /**
+   * Refresh all cools every visible pick and shows the new round as returned,
+   * so none of tonight's rejected films can reappear within seven days. The
+   * new round excludes all visible picks and fresh rated/watched ids, while
+   * keeping the pinned taste vector and prompt of the round being refreshed.
+   */
+  async function handleRefreshAll() {
+    if (state.status !== 'results' || actionPending) {
+      return;
+    }
+
+    const round = state.round;
+
+    setAction({ status: 'pending', kind: 'refresh' });
+
+    try {
+      const [ratedIds, watchedIds, cooldownIds] = await Promise.all([
+        profile.getRatedIds(),
+        profile.getWatchedIds(),
+        profile.getActiveCooldownIds(),
+      ]);
+      const { request, droppedIds } = buildRefreshAllInput({
+        ratedIds,
+        watchedIds,
+        tasteVector: round.intent.tasteVector,
+        prompt: round.intent.prompt,
+        visibleMovieIds: round.movies.map((pick) => pick.id),
+        cooldownIds,
+      });
+      const response = await fetchRecommendations(request);
+
+      await profile.setCooldowns(round.movies.map((pick) => pick.id));
+
+      setExclusionTrimmed(droppedIds.length > 0);
+      setState({
+        status: 'results',
+        round: { ...round, movies: response.movies },
+      });
+      setAction({ status: 'idle' });
+    } catch (error) {
+      setAction({ status: 'error', message: actionErrorMessage(error, REFRESH_ERROR_MESSAGE) });
+    }
+  }
+
+  const controlsDisabled = pending || actionPending;
+  const pendingReplaceIndex =
+    action.status === 'pending' && action.kind === 'replace' ? action.index : null;
 
   return (
     <main className="page">
@@ -197,28 +425,73 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
           />
-          <button type="submit" disabled={pending}>
+          <button type="submit" disabled={controlsDisabled}>
             {pending ? 'Finding a movie…' : 'Find my movie'}
           </button>
         </div>
       </form>
 
-      <section className="results" aria-live="polite" aria-busy={pending}>
+      <section className="results" aria-live="polite" aria-busy={controlsDisabled}>
         {pending && <p className="status">Finding something worth watching…</p>}
 
         {state.status === 'error' && <p className="status status--error">{state.message}</p>}
 
+        {action.status === 'pending' && (
+          <p className="status">
+            {action.kind === 'refresh' ? 'Refreshing all picks…' : 'Finding another movie…'}
+          </p>
+        )}
+
         {state.status === 'results' &&
-          (state.response.movies.length === 0 ? (
+          (state.round.movies.length === 0 ? (
             <p className="status">No picks tonight. Try a different direction.</p>
           ) : (
-            <div className="picks" key={state.requestId}>
-              {state.response.movies[0] !== undefined && (
-                <MainPick movie={state.response.movies[0]} />
-              )}
-              <Alternatives movies={state.response.movies.slice(1, 4)} />
+            <div className="pick-round">
+              <div className="pick-round__toolbar">
+                <button
+                  type="button"
+                  className="pick-action"
+                  disabled={controlsDisabled}
+                  onClick={() => {
+                    void handleRefreshAll();
+                  }}
+                >
+                  {action.status === 'pending' && action.kind === 'refresh'
+                    ? 'Refreshing…'
+                    : 'Refresh all'}
+                </button>
+                {action.status === 'error' && (
+                  <p className="status status--error">{action.message}</p>
+                )}
+              </div>
+
+              <div className="picks" key={state.round.requestId}>
+                {state.round.movies[0] !== undefined && (
+                  <MainPick
+                    movie={state.round.movies[0]}
+                    disabled={controlsDisabled}
+                    pending={pendingReplaceIndex === 0}
+                    onReject={() => {
+                      void handleReplace(0);
+                    }}
+                  />
+                )}
+                <Alternatives
+                  movies={state.round.movies.slice(1, 4)}
+                  startIndex={1}
+                  disabled={controlsDisabled}
+                  pendingIndex={pendingReplaceIndex}
+                  onReject={(index) => {
+                    void handleReplace(index);
+                  }}
+                />
+              </div>
             </div>
           ))}
+
+        {state.status === 'results' && exclusionTrimmed && (
+          <p className="status">{EXCLUSION_TRIM_NOTICE}</p>
+        )}
       </section>
 
       <Library profile={profile} />

@@ -20,6 +20,12 @@ export const watchlistRecordSchema = z.object({
 });
 export type WatchlistRecord = z.infer<typeof watchlistRecordSchema>;
 
+export const cooldownRecordSchema = z.object({
+  movieId: tasteRatingSchema.shape.movieId,
+  expiresAt: timestampSchema,
+});
+export type CooldownRecord = z.infer<typeof cooldownRecordSchema>;
+
 export const profileMovieIdSchema = tasteRatingSchema.shape.movieId;
 
 /** The taste endpoint accepts at most 500 ratings per request. */

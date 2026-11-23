@@ -1,12 +1,15 @@
 import { tasteRatingSchema, type TasteRequest } from '@movie-recommender/shared';
 import type { ZodType } from 'zod';
+import { COOLDOWN_MS } from '../recommendationInput';
 import { GuestProfileDB } from './db';
 import {
   MAX_TASTE_RATINGS,
+  cooldownRecordSchema,
   profileMovieIdSchema,
   ratingRecordSchema,
   watchedRecordSchema,
   watchlistRecordSchema,
+  type CooldownRecord,
   type RatingRecord,
   type WatchedRecord,
   type WatchlistRecord,
@@ -102,6 +105,16 @@ export class GuestProfile {
     this.version += 1;
   }
 
+  /**
+   * Every rated movie id, uncapped. `ratingsPayload()` is capped at the taste
+   * endpoint's 500-rating limit, so it cannot stand in for exclusions: over
+   * 500 ratings, older rated films would lose their rated-implies-seen
+   * exclusion and could be recommended again.
+   */
+  async getRatedIds(): Promise<number[]> {
+    return uniqueSortedIds((await this.getRatings()).map((record) => record.movieId));
+  }
+
   async getWatchedIds(): Promise<number[]> {
     const records = parseValidRecords(await this.storage.readWatched(), watchedRecordSchema);
 
@@ -138,6 +151,66 @@ export class GuestProfile {
   async removeFromWatchlist(movieId: number): Promise<void> {
     await this.storage.deleteWatchlist(movieIdOrThrow(movieId));
     this.version += 1;
+  }
+
+  /**
+   * Cooldowns suppress a film that was replaced for seven days. They are a
+   * "not tonight" signal: never a dislike and never a rating.
+   */
+  async getActiveCooldownIds(): Promise<number[]> {
+    const now = this.now();
+    const records = parseValidRecords(await this.storage.readCooldowns(), cooldownRecordSchema);
+
+    return uniqueSortedIds(
+      records.filter((record) => record.expiresAt > now).map((record) => record.movieId),
+    );
+  }
+
+  async setCooldown(movieId: number): Promise<CooldownRecord> {
+    const record: CooldownRecord = {
+      movieId: movieIdOrThrow(movieId),
+      expiresAt: this.now() + COOLDOWN_MS,
+    };
+
+    await this.storage.writeCooldown(record);
+    this.version += 1;
+
+    return record;
+  }
+
+  async removeCooldown(movieId: number): Promise<void> {
+    await this.storage.deleteCooldown(movieIdOrThrow(movieId));
+    this.version += 1;
+  }
+
+  /**
+   * Batch form used by "refresh all": every id is validated before anything is
+   * written, one expiry is computed for the batch, the storage layer writes it
+   * in a single operation and the version bumps once. A partial refresh cannot
+   * leave some picks cooled and others not.
+   */
+  async setCooldowns(movieIds: readonly number[]): Promise<CooldownRecord[]> {
+    const ids = uniqueSortedIds(movieIds.map((movieId) => movieIdOrThrow(movieId)));
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const expiresAt = this.now() + COOLDOWN_MS;
+    const records = ids.map((movieId) => ({ movieId, expiresAt }));
+
+    await this.storage.writeCooldowns(records);
+    this.version += 1;
+
+    return records;
+  }
+
+  async cooldownsCount(): Promise<number> {
+    return (await this.getActiveCooldownIds()).length;
+  }
+
+  async hasCooldowns(): Promise<boolean> {
+    return (await this.cooldownsCount()) > 0;
   }
 
   /**
