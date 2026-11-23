@@ -20,6 +20,7 @@
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate -w @movie-recommender/api",
     "catalog:import-snapshot": "npm run catalog:import-snapshot -w @movie-recommender/api",
+    "evaluate:ranking": "npm run evaluate:ranking -w @movie-recommender/api",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

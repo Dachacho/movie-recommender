@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "catalog:import-snapshot": "node --env-file-if-exists=../../.env --import tsx src/modules/movies/snapshot-import.ts",
+    "evaluate:ranking": "node --env-file-if-exists=../../.env --import tsx src/evaluation/run.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
