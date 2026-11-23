@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { MovieCard } from '@movie-recommender/shared';
 import { RecommendationApiError, RecommendationNetworkError, searchMovies } from './api';
+import { LetterboxdImport } from './LetterboxdImport';
 import { ratingFromHalfStarPosition, starFill } from './libraryRatings';
 import type { GuestProfile } from './profile/GuestProfile';
 
@@ -218,6 +219,16 @@ export function Library({ profile }: { profile: GuestProfile }) {
       <p className="library__intro">
         Rate films you have seen to tune the picks. Watched films are left out of recommendations.
       </p>
+
+      <LetterboxdImport
+        profile={profile}
+        onRatingImported={(movieId, rating) => {
+          setRatings((previous) => new Map(previous).set(movieId, rating));
+        }}
+        onWatchedImported={(movieId) => {
+          setWatchedIds((previous) => toggledIds(previous, movieId, true));
+        }}
+      />
 
       <form className="library__search" onSubmit={handleSearch}>
         <label htmlFor="library-search">Find a film to rate</label>

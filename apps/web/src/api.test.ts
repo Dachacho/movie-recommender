@@ -5,6 +5,7 @@ import {
   RecommendationNetworkError,
   fetchRecommendations,
   fetchTasteVector,
+  importLetterboxd,
   searchMovies,
 } from './api';
 
@@ -255,5 +256,78 @@ describe('searchMovies', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await expect(searchMovies('arrival')).rejects.toBeInstanceOf(RecommendationNetworkError);
+  });
+});
+
+const IMPORT_RESPONSE = {
+  matched: [
+    { movieId: 11, title: 'Arrival', releaseYear: 2016, rating: 4.5 },
+    { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
+  ],
+  unmatched: [{ name: 'The Long Goodbye', year: 1973, reason: 'no_match' }],
+  stats: { rows: 3, matched: 2, unmatched: 1, invalid: 0 },
+};
+
+describe('importLetterboxd', () => {
+  it('posts the CSV and returns the parsed import report', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse(IMPORT_RESPONSE));
+
+    const result = await importLetterboxd('Name,Year,Rating\nArrival,2016,4.5');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/imports/letterboxd');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(submittedBody(fetchMock)).toEqual({ csv: 'Name,Year,Rating\nArrival,2016,4.5' });
+    expect(result).toEqual(IMPORT_RESPONSE);
+  });
+
+  it.each(['', 'x'.repeat(200_001)])(
+    'rejects an out-of-range CSV without calling fetch',
+    async (csv) => {
+      const fetchMock = stubFetch();
+
+      await expect(importLetterboxd(csv)).rejects.toMatchObject({
+        name: 'RecommendationApiError',
+        code: 'invalid_request',
+        message: 'Choose a non-empty Letterboxd CSV export of up to 200,000 characters.',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects with the API error code and message for a non-2xx response', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { error: { code: 'invalid_csv', message: 'CSV must include a Name column.' } },
+        400,
+      ),
+    );
+
+    await expect(importLetterboxd('Name\nArrival')).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_csv',
+      message: 'CSV must include a Name column.',
+    });
+  });
+
+  it('rejects an unexpected success payload instead of returning it', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ matched: 'not an array' }));
+
+    await expect(importLetterboxd('Name\nArrival')).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_response',
+      message: 'The import service returned an unexpected response. Try again.',
+    });
+  });
+
+  it('rejects with a network error when fetch fails', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(importLetterboxd('Name\nArrival')).rejects.toBeInstanceOf(
+      RecommendationNetworkError,
+    );
   });
 });

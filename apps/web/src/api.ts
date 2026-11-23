@@ -1,9 +1,12 @@
 import {
   apiErrorSchema,
+  letterboxdImportRequestSchema,
+  letterboxdImportResponseSchema,
   movieListResponseSchema,
   movieSearchQuerySchema,
   recommendationResponseSchema,
   tasteResponseSchema,
+  type LetterboxdImportResponse,
   type MovieCard,
   type RecommendationRequest,
   type RecommendationResponse,
@@ -23,6 +26,10 @@ const INVALID_TASTE_RESPONSE_MESSAGE =
 const INVALID_SEARCH_QUERY_MESSAGE = 'Enter a search term between 2 and 80 characters.';
 const INVALID_SEARCH_RESPONSE_MESSAGE =
   'The movie search returned an unexpected response. Try again.';
+const INVALID_IMPORT_CSV_MESSAGE =
+  'Choose a non-empty Letterboxd CSV export of up to 200,000 characters.';
+const INVALID_IMPORT_RESPONSE_MESSAGE =
+  'The import service returned an unexpected response. Try again.';
 
 export class RecommendationApiError extends Error {
   readonly code: string;
@@ -121,6 +128,40 @@ export async function searchMovies(query: string): Promise<MovieCard[]> {
   }
 
   return parsed.data.movies;
+}
+
+export async function importLetterboxd(csv: string): Promise<LetterboxdImportResponse> {
+  const parsedRequest = letterboxdImportRequestSchema.safeParse({ csv });
+
+  if (!parsedRequest.success) {
+    throw new RecommendationApiError('invalid_request', INVALID_IMPORT_CSV_MESSAGE);
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch('/api/imports/letterboxd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsedRequest.data),
+    });
+  } catch {
+    throw new RecommendationNetworkError();
+  }
+
+  const payload = await readJson(response);
+
+  if (!response.ok) {
+    throw apiErrorFromPayload(payload, 'unknown_error');
+  }
+
+  const parsed = letterboxdImportResponseSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new RecommendationApiError('invalid_response', INVALID_IMPORT_RESPONSE_MESSAGE);
+  }
+
+  return parsed.data;
 }
 
 export async function fetchRecommendations(
