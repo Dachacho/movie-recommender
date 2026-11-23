@@ -124,6 +124,21 @@ const CARD_BY_ID = new Map(FIXTURES.map((fixture) => [fixture.id, toMovieCard(fi
 
 const TASTE_VECTOR = axisEmbedding(0);
 
+/**
+ * Points most strongly at axis three (the lowest-reception fixture) while a
+ * weaker component points at axis one. Taste alone puts axis four first;
+ * halving similarity lets the reception tilt overtake it.
+ */
+const EXPLORATION_TASTE_VECTOR = (() => {
+  const vector = axisEmbedding(3);
+  const scale = 1 / Math.hypot(1, 0.95);
+
+  vector[3] = scale;
+  vector[0] = 0.95 * scale;
+
+  return vector;
+})();
+
 const PROMPT_TEXT = 'a quiet film about loneliness';
 const PROMPT_AXIS = 1;
 
@@ -770,6 +785,47 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
     // Both have zero similarity to the taste axis; the quality tilt beats id order.
     expect(body.movies.map((movie) => movie.id)).toEqual([AXIS_THREE_ID]);
   });
+
+  it.each([
+    ['0 keeps taste order', 0, [AXIS_FOUR_ID, AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
+    ['0.5 halves the taste weight', 0.5, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
+    ['1 removes taste from ranking', 1, [AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID, AXIS_FOUR_ID]],
+  ])('exploration %s', async (_label, exploration, expectedIds) => {
+    const response = await postRecommendations({
+      source: 'list',
+      candidateIds: FIXTURE_IDS,
+      tasteVector: EXPLORATION_TASTE_VECTOR,
+      exploration,
+      limit: 4,
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await readBody(response);
+
+    expect(body.coldStart).toBe(false);
+    expect(body.movies.map((movie) => movie.id)).toEqual(expectedIds);
+  });
+
+  it.each([-0.1, 1.1, Number.NaN])(
+    'returns 400 for invalid exploration %s',
+    async (exploration) => {
+      const response = await postRecommendations({
+        source: 'list',
+        candidateIds: [AXIS_ONE_ID],
+        tasteVector: TASTE_VECTOR,
+        exploration,
+        limit: 1,
+      });
+
+      expect(response.status).toBe(400);
+
+      const errorBody = await readError(response);
+
+      expect(errorBody.error.code).toBe('invalid_request');
+      expect(errorBody.error.details).toBeDefined();
+    },
+  );
 
   it('returns only the movies and coldStart top-level fields', async () => {
     const response = await postRecommendations({

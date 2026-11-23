@@ -105,7 +105,7 @@ export function createRecommendationRoutes(
       return;
     }
 
-    const { candidateIds, excludeIds, limit, prompt, tasteVector } = parsed.data;
+    const { candidateIds, excludeIds, exploration, limit, prompt, tasteVector } = parsed.data;
 
     // Count before any inference work so over-limit callers never load the model.
     if (isRateLimited(request.ip ?? 'unknown', Date.now())) {
@@ -137,6 +137,7 @@ export function createRecommendationRoutes(
     const result = await recommendMovies(db, {
       tasteVector: queryVector,
       limit,
+      ...(exploration === undefined ? {} : { exploration }),
       ...(filters === undefined ? {} : { filters }),
       ...(candidateIds === undefined ? {} : { candidateIds }),
       ...(excludeIds === undefined ? {} : { excludeIds }),

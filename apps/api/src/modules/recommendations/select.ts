@@ -49,6 +49,46 @@ function relevance(candidate: ScoredCandidate): number {
   return candidate.similarity + tilt;
 }
 
+function validateExploration(exploration: number): void {
+  if (!Number.isFinite(exploration) || exploration < 0 || exploration > 1) {
+    throw new RangeError(
+      `exploration must be a finite number between 0 and 1, received ${exploration}.`,
+    );
+  }
+}
+
+/**
+ * Interim, product-approved exploration blend, pending held-out evaluation.
+ * Taste similarity is scaled by `1 - exploration`, so 0 keeps today's ranking
+ * exactly, 0.5 halves taste's weight against the reception tilt, and 1
+ * flattens every similarity to zero: the whole pool then ranks by reception
+ * tilt and the diversity penalty alone. This only relaxes ranking; source,
+ * exclusion and prompt filters are applied before the pool is built and are
+ * never affected.
+ */
+export function applyExploration(
+  candidates: readonly ScoredCandidate[],
+  exploration: number,
+): readonly ScoredCandidate[] {
+  validateExploration(exploration);
+
+  if (exploration === 0) {
+    return candidates;
+  }
+
+  if (exploration === 1) {
+    // No taste signal at all; avoid producing negative zero from -0 * 0.
+    return candidates.map((candidate) => ({ ...candidate, similarity: 0 }));
+  }
+
+  const weight = 1 - exploration;
+
+  return candidates.map((candidate) => ({
+    ...candidate,
+    similarity: candidate.similarity * weight,
+  }));
+}
+
 export interface SelectedRecommendation {
   movieId: number;
   similarity: number;

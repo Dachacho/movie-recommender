@@ -90,6 +90,7 @@ export const recommendationRequestSchema = z
     candidateIds: movieIdsSchema.optional(),
     excludeIds: movieIdsSchema.optional(),
     limit: z.number().int().min(1).max(4),
+    exploration: z.number().min(0).max(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.source === 'catalog') {
