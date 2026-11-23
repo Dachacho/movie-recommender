@@ -1,34 +1,41 @@
 ---
 name: test-driven-development
-description: Use when implementing any feature or bugfix, before writing implementation code
+description: Use for complex or high-risk logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Covers edge cases, failure paths and invariants; ordinary features may test after implementation, and trivial changes need none.
 ---
 
 # Test-Driven Development (TDD)
 
 ## Overview
 
-Write the test first. Watch it fail. Write minimal code to pass.
+For complex or high-risk logic, write the test first. Watch it fail. Write minimal code to pass.
 
-**Core principle:** If you didn't watch the test fail, you don't know if it tests the right thing.
+**Core principle:** For complex logic, if you didn't watch the test fail, you don't know if it tests the right thing.
 
-**Violating the letter of the rules is violating the spirit of the rules.**
+**For complex logic, violating the letter of the rules is violating the spirit.**
 
 ## When to Use
 
-**Always:**
-- New features
-- Bug fixes
-- Refactoring
-- Behavior changes
+**Use test-first for complex or high-risk logic:**
+- Taste-vector math, ranking, diversity, filters, cooldown edges
+- CSV and list matching
+- Other logic where a wrong result is costly
+
+**Ordinary features and UI behaviour:** tests need not come first, but meaningful behaviour changes still need appropriate automated tests. Write them after the implementation when that is clearer.
+
+**Trivial changes:** documentation, styling-only changes and non-behavioural refactors do not require new tests. Do not add low-value tests merely to satisfy a rule.
+
+**Bug fixes:** add a regression test that reproduces the bug when practical, then verify the fix.
 
 **Exceptions (ask your human partner):**
 - Throwaway prototypes
 - Generated code
 - Configuration files
 
-Thinking "skip TDD just this once"? Stop. That's rationalization.
+For complex or high-risk logic, thinking "skip TDD just this once"? Stop. That's rationalization.
 
 ## The Iron Law
+
+For complex or high-risk logic:
 
 ```
 NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
@@ -45,6 +52,8 @@ Write code before the test? Delete it. Start over.
 Implement fresh from tests. Period.
 
 ## Red-Green-Refactor
+
+Use this cycle for complex or high-risk logic.
 
 ```dot
 digraph tdd_cycle {
@@ -221,11 +230,13 @@ When writing or changing any test, read [writing-good-tests.md](writing-good-tes
 
 ## Common Rationalizations
 
+These apply when the behaviour is complex or costly to get wrong:
+
 | Excuse | Reality |
 |--------|---------|
-| "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
-| "I'll test after" | Tests written after pass immediately — which proves nothing. They may test the wrong thing, test the implementation instead of the behavior, or miss the edge case you forgot. You never watched it fail, so you never proved it can catch the bug. Test-first forces that failure. |
-| "Tests after achieve same goals (spirit not ritual)" | Tests-after answer "what does this do?"; tests-first answer "what should this do?" Tests written after are biased by the code you already wrote — you verify the cases you remembered, not the ones you'd have discovered. Coverage without proof the tests work. |
+| "Too simple to test" | If the behaviour is complex or costly to get wrong, test it. Trivial changes need no test. |
+| "I'll test after" | For complex logic, tests written after pass immediately — which proves nothing. They may test the wrong thing, test the implementation instead of the behavior, or miss the edge case you forgot. You never watched it fail, so you never proved it can catch the bug. Test-first forces that failure. |
+| "Tests after achieve same goals (spirit not ritual)" | For complex logic, tests-after answer "what does this do?"; tests-first answer "what should this do?" Tests written after are biased by the code you already wrote — you verify the cases you remembered, not the ones you'd have discovered. Coverage without proof the tests work. |
 | "Already manually tested" | Manual testing is ad-hoc: no record of what you covered, no way to re-run it when the code changes, easy to forget cases under pressure. "Worked when I tried it" ≠ comprehensive. Automated tests run the same way every time. |
 | "Deleting X hours is wasteful" | Sunk cost fallacy — that time is already spent either way. The real choice: rewrite with TDD (high confidence) vs. keep it and bolt tests on after (low confidence, likely bugs). Keeping code you can't trust is the waste. |
 | "Keep as reference, write tests first" | You'll adapt it. That's testing after. Delete means delete. |
@@ -233,9 +244,13 @@ When writing or changing any test, read [writing-good-tests.md](writing-good-tes
 | "Test hard = design unclear" | Listen to test. Hard to test = hard to use. |
 | "TDD will slow me down" | TDD IS the pragmatic path: catches bugs before commit, prevents regressions, lets you refactor without fear. "Pragmatic" shortcuts mean debugging in production — slower, not faster. |
 | "Manual test faster" | Manual doesn't prove edge cases. You'll re-test every change. |
-| "Existing code has no tests" | You're improving it. Add tests for existing code. |
+| "Existing code has no tests" | Add tests for the complex behaviour you touch. |
+
+They do not require test-first for ordinary features or tests for trivial changes.
 
 ## Red Flags - STOP and Start Over
+
+For complex or high-risk logic, these mean stop and start over:
 
 - Code before test
 - Test after implementation
@@ -251,7 +266,7 @@ When writing or changing any test, read [writing-good-tests.md](writing-good-tes
 - "TDD is dogmatic, I'm being pragmatic"
 - "This is different because..."
 
-**All of these mean: Delete code. Start over with TDD.**
+**For complex or high-risk logic, all of these mean: delete the code and start over with TDD.**
 
 ## Example: Bug Fix
 
@@ -292,18 +307,20 @@ Extract validation for multiple fields if needed.
 
 ## Verification Checklist
 
-Before marking work complete:
-
-- [ ] Every new function/method has a test
+For complex or high-risk logic:
+- [ ] Every new behaviour has a test
 - [ ] Watched each test fail before implementing
-- [ ] Each test failed for expected reason (feature missing, not typo)
-- [ ] Wrote minimal code to pass each test
-- [ ] All tests pass
-- [ ] Output pristine (no errors, warnings)
+- [ ] Each test failed for the expected reason (feature missing, not a typo)
+- [ ] Wrote minimal code to pass
+- [ ] Edge cases, failure paths and relevant invariants are covered
 - [ ] Tests use real code (mocks only if unavoidable)
-- [ ] Edge cases and errors covered
 
-Can't check all boxes? You skipped TDD. Start over.
+For any change:
+- [ ] Relevant existing tests and checks pass
+- [ ] Ordinary behaviour changes have appropriate automated tests
+- [ ] Skipped tests are listed, not counted as passed
+
+For complex logic, a missed box means the test-first cycle was skipped; redo it.
 
 ## When Stuck
 
@@ -316,15 +333,16 @@ Can't check all boxes? You skipped TDD. Start over.
 
 ## Debugging Integration
 
-Bug found? Write failing test reproducing it. Follow TDD cycle. Test proves fix and prevents regression.
-
-Never fix bugs without a test.
+Bug found? Add a regression test that reproduces it when practical, watch it fail, then fix. The test proves the fix and prevents regression. If a regression test is impractical, record why and verify the fix another way.
 
 ## Final Rule
 
+For complex or high-risk logic:
+
 ```
 Production code → test exists and failed first
-Otherwise → not TDD
 ```
 
-No exceptions without your human partner's permission.
+For ordinary features, tests may follow implementation. Trivial changes need no new test.
+
+Exceptions to test-first for complex logic require your human partner's permission.

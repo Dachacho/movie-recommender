@@ -51,9 +51,13 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 
 ### Test
 
-- Add focused tests for changed behaviour that affects the acceptance criteria or where a wrong result is costly, including failure cases: invalid input, empty pool, filter violations, cooldown boundaries, zero-norm taste. Complex logic follows `test-driven-development`: write the failing test first, then the minimal implementation. Ordinary UI and trivial changes may implement first and add tests afterward; do not test trivial code.
+- Complex or high-risk logic: test-first. Cover edge cases, failure paths and relevant invariants, such as invalid input, empty pool, filter violations, cooldown boundaries and zero-norm taste. Load `test-driven-development`.
+- Ordinary features and UI behaviour: tests need not come first, but meaningful behaviour changes need appropriate automated tests.
+- Trivial changes: documentation, styling-only changes and non-behavioural refactoring need no new tests.
+- Bug fixes: add a regression test that reproduces the bug when practical, then verify the fix.
+- Do not add low-value tests merely to satisfy a rule. Prefer meaningful coverage and correctness over test quantity.
 - Unit-test pure math and selection logic against small committed fixtures; no network in unit tests. Use integration tests for API routes and DB access.
-- The commands and evidence rules are in the review workflow below. Report each exact command and actual result; never claim a check passes without running it, and say why if one cannot run.
+- Run relevant existing tests and checks before reporting completion. Never claim a skipped test passed. The commands and evidence rules are in the review workflow below; report each exact command and actual result.
 
 ### Review
 
@@ -64,7 +68,7 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 
 Installed skills live in `.agents/skills/`. OpenCode advertises each description; load the skill when its description matches the task. PRODUCT.md, ARCHITECTURE.md, this file and the §2 approval gates override any skill; a skill never justifies a new dependency, schema change or scope expansion.
 
-- **test-driven-development** — load before writing complex logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Write the failing test first, then the minimal implementation. Ordinary UI and trivial changes may implement first; do not test trivial code.
+- **test-driven-development** — load for complex or high-risk logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Write the failing test first; cover edge cases, failure paths and relevant invariants. Ordinary features and UI behaviour need appropriate tests but not test-first; trivial changes need none. Bug fixes get a regression test when practical.
 - **systematic-debugging** — load for every bug, failing test or unexpected result before proposing a fix. Find the root cause first. After three failed fixes, stop and raise the architectural question instead of trying a fourth.
 - **verification-before-completion** — load before any claim that work is done or passing, and before the final report. Run the exact command, read the full output and state only what it proves. Reviewers check the supplied raw output instead, because their permissions deny shell.
 - **receiving-code-review** — load when acting on reviewer findings: verify each finding against the code, push back with reasoning if it is wrong, and fix one item at a time.
@@ -74,7 +78,7 @@ Installed skills live in `.agents/skills/`. OpenCode advertises each description
 ## 4. Definition of done
 
 - Requested behaviour works and failure paths are handled.
-- Tests cover the changed behaviour required by §3 Test, including failures.
+- Test coverage matches §3 Test; skipped tests are listed, not counted as passed.
 - Lint, format check, typecheck and relevant tests pass (or failures are reported with output).
 - No lint rule disabled, suppression comment added or configuration weakened without approval.
 - No unapproved dependency, schema, API, architecture or embedding change.
