@@ -2,7 +2,6 @@
 
 ## To do
 - [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
-- [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration. (Include a rewatch source: candidates are the guest's films rated 4.0+ — comfort rewatch mode ranks the guest's own shortlist by tonight's mood; research-backed, rides the existing list-source machinery.)
 - [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on. Retune the interim quality-tilt weights from the reranker: 0.12 tilt, 0.7/0.3 rating-dominant vote blend, log scale 6 — user reports unfamiliar films still surfacing; decide the right dial value with evidence, and discuss whether a minimum-vote threshold is acceptable given the architecture's no-eligibility-gate rule.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
@@ -10,6 +9,7 @@
 ## Doing
 
 ## Done
+- [x] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration. (Four sources: catalog, watchlist, rewatch shortlist rated 4.0+, pasted lists; per-pick replacement with seven-day cooldowns, atomic batch writes, action-time exclusions, and trim notices; exploration 0-1 scales taste similarity, Surprise me sends interim 0.5.)
 - [x] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings. (MVP shipped: match-only against the catalog with a matched/unmatched report, ratings.csv and watches.csv, rated rows imply seen. TMDB resolution for unmatched films split into the catalog-growth ticket.)
 - [x] Add IndexedDB guest profile, ratings, watched state and watchlist. (Dexie-backed, Zod-validated; ratings power the stateless /taste flow, watched ids excluded from picks; library UI with half-star ratings and toggles.)
 - [x] Parse explicit prompt constraints (genre, runtime, era keywords) into hard filters; soft genre boost for suggestive phrases. (Hard filters shipped; soft boosts deferred to the evaluation ticket so tuning uses evidence, not guesses.)
