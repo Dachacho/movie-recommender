@@ -125,3 +125,51 @@ export const recommendationResponseSchema = z.object({
   coldStart: z.boolean(),
 });
 export type RecommendationResponse = z.infer<typeof recommendationResponseSchema>;
+
+export const LETTERBOXD_MAX_CSV_LENGTH = 200_000;
+
+export const letterboxdImportRequestSchema = z.object({
+  csv: z.string().min(1).max(LETTERBOXD_MAX_CSV_LENGTH),
+});
+export type LetterboxdImportRequest = z.infer<typeof letterboxdImportRequestSchema>;
+
+export const LETTERBOXD_UNMATCHED_REASONS = ['no_match'] as const;
+
+export const letterboxdUnmatchedReasonSchema = z.enum(LETTERBOXD_UNMATCHED_REASONS);
+export type LetterboxdUnmatchedReason = z.infer<typeof letterboxdUnmatchedReasonSchema>;
+
+export const letterboxdMatchedSchema = z.object({
+  movieId: z.number().int().positive(),
+  title: z.string(),
+  releaseYear: z.number().int().nullable(),
+  // Null means the import row marked the film watched but carried no rating.
+  rating: z
+    .number()
+    .min(0.5)
+    .max(5)
+    .refine((value) => Number.isInteger(value * 2), 'rating must be a half-star value')
+    .nullable(),
+});
+export type LetterboxdMatched = z.infer<typeof letterboxdMatchedSchema>;
+
+export const letterboxdUnmatchedSchema = z.object({
+  name: z.string(),
+  year: z.number().int().nullable(),
+  reason: letterboxdUnmatchedReasonSchema,
+});
+export type LetterboxdUnmatched = z.infer<typeof letterboxdUnmatchedSchema>;
+
+export const letterboxdImportStatsSchema = z.object({
+  rows: z.number().int().nonnegative(),
+  matched: z.number().int().nonnegative(),
+  unmatched: z.number().int().nonnegative(),
+  invalid: z.number().int().nonnegative(),
+});
+export type LetterboxdImportStats = z.infer<typeof letterboxdImportStatsSchema>;
+
+export const letterboxdImportResponseSchema = z.object({
+  matched: z.array(letterboxdMatchedSchema),
+  unmatched: z.array(letterboxdUnmatchedSchema),
+  stats: letterboxdImportStatsSchema,
+});
+export type LetterboxdImportResponse = z.infer<typeof letterboxdImportResponseSchema>;

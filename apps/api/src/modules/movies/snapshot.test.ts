@@ -2,10 +2,12 @@ import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { MalformedCsvError } from './csv.js';
 import {
   prepareSnapshot,
   readCsvRecords,
   selectTopByPopularity,
+  SNAPSHOT_COLUMNS,
   SNAPSHOT_LIMIT,
   toSnapshotMovie,
   type QualifiedMovie,
@@ -354,6 +356,12 @@ describe('prepareSnapshot', () => {
 
   it('rejects an empty CSV', async () => {
     await expect(prepareSnapshot(sourceOf(''))).rejects.toThrow('CSV is empty');
+  });
+
+  it('rejects an unterminated quoted field instead of importing it', async () => {
+    const text = `${SNAPSHOT_COLUMNS.join(',')}\n100,"Unclosed`;
+
+    await expect(prepareSnapshot(sourceOf(text))).rejects.toThrow(MalformedCsvError);
   });
 
   it('rejects a negative limit', async () => {

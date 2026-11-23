@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCsv, toObjects } from './csv.js';
+import { MalformedCsvError, parseCsv, toObjects } from './csv.js';
 
 describe('parseCsv', () => {
   it('handles quoted commas, quotes and newlines', () => {
@@ -23,6 +23,27 @@ describe('parseCsv', () => {
     expect([...parseCsv('a,b\n1,\n')]).toEqual([
       ['a', 'b'],
       ['1', ''],
+    ]);
+  });
+
+  it('throws before yielding a record with an unterminated quoted field', () => {
+    const rows = parseCsv('Date,Name\n2026-01-01,"Unclosed');
+
+    expect(rows.next()).toEqual({ done: false, value: ['Date', 'Name'] });
+    expect(() => rows.next()).toThrow(MalformedCsvError);
+  });
+
+  it('yields a well-formed final record without a trailing newline', () => {
+    expect([...parseCsv('a,b\n1,2')]).toEqual([
+      ['a', 'b'],
+      ['1', '2'],
+    ]);
+  });
+
+  it('yields a properly closed quoted field at the end of input', () => {
+    expect([...parseCsv('a,b\n1,"x,y"')]).toEqual([
+      ['a', 'b'],
+      ['1', 'x,y'],
     ]);
   });
 });

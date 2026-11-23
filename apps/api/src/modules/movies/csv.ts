@@ -1,3 +1,10 @@
+export class MalformedCsvError extends Error {
+  constructor(message = 'CSV contains an unterminated quoted field.') {
+    super(message);
+    this.name = 'MalformedCsvError';
+  }
+}
+
 export function* parseCsv(text: string): Generator<string[]> {
   let row: string[] = [];
   let field = '';
@@ -54,6 +61,10 @@ export function* parseCsv(text: string): Generator<string[]> {
 
     field += character;
     index += 1;
+  }
+
+  if (inQuotes) {
+    throw new MalformedCsvError();
   }
 
   if (field.length > 0 || row.length > 0) {

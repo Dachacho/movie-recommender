@@ -1,5 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Database } from './db/client.js';
+import { createImportRoutes } from './modules/imports/routes.js';
 import { createMovieRoutes } from './modules/movies/routes.js';
 import { createRecommendationRoutes } from './modules/recommendations/routes.js';
 import { createTasteRoutes } from './modules/taste/routes.js';
@@ -22,6 +23,7 @@ export function createApp({ db }: { db: Database }): Express {
   });
 
   app.use('/movies', createMovieRoutes(db));
+  app.use('/imports', createImportRoutes(db));
   app.use('/taste', createTasteRoutes(db));
   app.use('/recommendations', createRecommendationRoutes(db));
 
