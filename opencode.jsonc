@@ -1,7 +1,38 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "git commit", "effect": "ask" },
+    { "action": "shell", "resource": "git commit *", "effect": "ask" },
+    { "action": "shell", "resource": "git commit -a", "effect": "deny" },
+    { "action": "shell", "resource": "git commit -a *", "effect": "deny" },
+    { "action": "shell", "resource": "git commit -am *", "effect": "deny" },
+    { "action": "shell", "resource": "git commit --all", "effect": "deny" },
+    { "action": "shell", "resource": "git commit --all *", "effect": "deny" },
+    { "action": "shell", "resource": "git push", "effect": "ask" },
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    { "action": "shell", "resource": "git add -A", "effect": "deny" },
+    { "action": "shell", "resource": "git add -A *", "effect": "deny" },
+    { "action": "shell", "resource": "git add --all", "effect": "deny" },
+    { "action": "shell", "resource": "git add --all *", "effect": "deny" },
+    { "action": "shell", "resource": "git add .", "effect": "deny" },
+    { "action": "shell", "resource": "git add -u", "effect": "deny" },
+    { "action": "shell", "resource": "git add -u *", "effect": "deny" },
+    { "action": "shell", "resource": "git add --update", "effect": "deny" },
+    { "action": "shell", "resource": "git add --update *", "effect": "deny" },
+  ],
   "agents": {
-    "plan": { "model": "opencode-go/glm-5.3" },
-    "build": { "model": "opencode-go/glm-5.3" },
+    "plan": {
+      "model": "opencode-go/deepseek-v4.1-flash#high",
+    },
+    "build": {
+      "model": "opencode-go/deepseek-v4.1-flash#high",
+      "permissions": [
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "implementer", "effect": "allow" },
+        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
+        { "action": "subagent", "resource": "reviewer-strict", "effect": "allow" },
+      ],
+    },
   },
 }
