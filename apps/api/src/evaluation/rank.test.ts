@@ -1,9 +1,59 @@
 import { describe, expect, it } from 'vitest';
+import { selectDiverse } from '../modules/recommendations/select.js';
+import type { ScoredCandidate } from '../modules/recommendations/types.js';
 import type { CatalogEntry } from './load.js';
-import { rankByGenre, rankByPopularity, topLikedGenres } from './rank.js';
+import {
+  deepRerank,
+  fetchNearestPool,
+  rankByGenre,
+  rankByPopularity,
+  rankCandidates,
+  tiltPool,
+  topLikedGenres,
+} from './rank.js';
 
 function entry(movieId: number, voteCount: number | null, genres: string[]): CatalogEntry {
   return { movieId, voteCount, genres };
+}
+
+function candidate(
+  movieId: number,
+  similarity: number,
+  embedding: number[],
+  voteAverage: number | null = null,
+  voteCount: number | null = null,
+): ScoredCandidate {
+  return { movieId, similarity, embedding, voteAverage, voteCount };
+}
+
+/** Deterministic LCG so the fixture is stable across runs. */
+function seeded(seed: number): () => number {
+  let state = seed;
+
+  return () => {
+    state = (state * 1_664_525 + 1_013_904_223) % 4_294_967_296;
+
+    return state / 4_294_967_296;
+  };
+}
+
+function parityFixture(): ScoredCandidate[] {
+  const random = seeded(42);
+  const candidates: ScoredCandidate[] = [];
+
+  for (let index = 0; index < 24; index += 1) {
+    const embedding = Array.from({ length: 8 }, () => random() * 2 - 1);
+
+    candidates.push({
+      movieId: index + 1,
+      similarity: 1 - index * 0.01 + random() * 0.005,
+      embedding,
+      voteAverage: random() * 10,
+      voteCount: Math.floor(random() * 1_000_000),
+    });
+  }
+
+  return candidates;
 }
 
 const UNIVERSE: readonly CatalogEntry[] = [
@@ -88,5 +138,145 @@ describe('rankByGenre', () => {
 
   it('rejects an invalid limit', () => {
     expect(() => rankByGenre(UNIVERSE, ['Drama'], 0)).toThrow(RangeError);
+  });
+});
+
+describe('deepRerank', () => {
+  it('matches selectDiverse for the production limit and tilt', () => {
+    const fixture = parityFixture();
+    const production = selectDiverse(fixture, { limit: 4 }).map((pick) => pick.movieId);
+
+    expect(deepRerank(fixture, { limit: 4, tiltWeight: 0.12 })).toEqual(production);
+  });
+
+  it('keeps the production top four as the head of a deeper ranking', () => {
+    const fixture = parityFixture();
+    const production = selectDiverse(fixture, { limit: 4 }).map((pick) => pick.movieId);
+    const deep = deepRerank(fixture, { limit: 100, tiltWeight: 0.12 });
+
+    expect(deep.slice(0, 4)).toEqual(production);
+  });
+
+  it('returns every candidate when the requested depth exceeds the pool', () => {
+    const fixture = parityFixture();
+
+    expect(deepRerank(fixture, { limit: 100, tiltWeight: 0.12 })).toHaveLength(fixture.length);
+  });
+
+  it('ranks by raw similarity when the tilt is zero', () => {
+    const pool = [candidate(1, 0.9, [1, 0], 0, 0), candidate(2, 0.8, [0, 1], 10, 1_000_000)];
+
+    expect(deepRerank(pool, { limit: 2, tiltWeight: 0 })).toEqual([1, 2]);
+  });
+
+  it('promotes a better-received film when the tilt is large enough', () => {
+    const pool = [candidate(1, 0.9, [1, 0], 0, 0), candidate(2, 0.8, [0, 1], 10, 1_000_000)];
+
+    expect(deepRerank(pool, { limit: 2, tiltWeight: 0.25 })).toEqual([2, 1]);
+  });
+
+  it('breaks score ties by the lower movie id', () => {
+    const pool = [candidate(7, 0.5, [1, 0]), candidate(3, 0.5, [0, 1])];
+
+    expect(deepRerank(pool, { limit: 2, tiltWeight: 0 })).toEqual([3, 7]);
+  });
+
+  it('rejects an invalid limit, tilt weight or penalty', () => {
+    const pool = [candidate(1, 1, [1, 0])];
+
+    expect(() => deepRerank(pool, { limit: 0, tiltWeight: 0.12 })).toThrow(RangeError);
+    expect(() => deepRerank(pool, { limit: 1.5, tiltWeight: 0.12 })).toThrow(RangeError);
+    expect(() => deepRerank(pool, { limit: 1, tiltWeight: -0.1 })).toThrow(RangeError);
+    expect(() => deepRerank(pool, { limit: 1, tiltWeight: Number.NaN })).toThrow(RangeError);
+    expect(() => deepRerank(pool, { limit: 1, tiltWeight: 0.12, penalty: 2 })).toThrow(RangeError);
+  });
+});
+
+describe('tiltPool', () => {
+  it('orders by similarity plus the weighted quality score', () => {
+    const pool = [candidate(1, 0.9, [1, 0], 0, 0), candidate(2, 0.8, [0, 1], 10, 1_000_000)];
+
+    expect(tiltPool(pool, 0.25).map((entry) => entry.movieId)).toEqual([2, 1]);
+    expect(tiltPool(pool, 0).map((entry) => entry.movieId)).toEqual([1, 2]);
+  });
+
+  it('breaks ties by movie id and leaves the input untouched', () => {
+    const pool = [candidate(2, 0.5, [1, 0]), candidate(1, 0.5, [0, 1])];
+
+    expect(tiltPool(pool, 0.12).map((entry) => entry.movieId)).toEqual([1, 2]);
+    expect(pool.map((entry) => entry.movieId)).toEqual([2, 1]);
+  });
+
+  it('rejects a negative or non-finite weight', () => {
+    expect(() => tiltPool([], -1)).toThrow(RangeError);
+    expect(() => tiltPool([], Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  });
+});
+
+describe('rankCandidates', () => {
+  it('slices the cosine pool when pool-stage tilt is off', () => {
+    const buffer = [candidate(1, 0.9, [1, 0], 0, 0), candidate(2, 0.8, [0, 1], 10, 1_000_000)];
+
+    expect(
+      rankCandidates(buffer, {
+        poolSize: 1,
+        poolTiltWeight: 0,
+        tiltWeight: 0.12,
+        depth: 100,
+      }),
+    ).toEqual([1]);
+  });
+
+  it('can reach past the pool slice when pool-stage tilt is on', () => {
+    const buffer = [candidate(1, 0.95, [1, 0], 0, 0), candidate(2, 0.9, [0, 1], 10, 1_000_000)];
+    const settings = {
+      poolSize: 1,
+      poolTiltWeight: 0.12,
+      tiltWeight: 0.12,
+      depth: 100,
+    };
+
+    expect(rankCandidates(buffer, settings)).toEqual([2]);
+  });
+
+  it('caps the ranking at the requested depth', () => {
+    const buffer = [
+      candidate(1, 0.9, [1, 0]),
+      candidate(2, 0.8, [0, 1]),
+      candidate(3, 0.7, [1, 1]),
+    ];
+
+    expect(
+      rankCandidates(buffer, {
+        poolSize: 3,
+        poolTiltWeight: 0,
+        tiltWeight: 0.12,
+        depth: 2,
+      }),
+    ).toHaveLength(2);
+  });
+
+  it('rejects an invalid pool size', () => {
+    expect(() =>
+      rankCandidates([], { poolSize: 0, poolTiltWeight: 0, tiltWeight: 0.12, depth: 100 }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('fetchNearestPool', () => {
+  const unusedDatabase = undefined as never;
+
+  it('rejects an invalid pool size before querying', async () => {
+    const embedding = Array.from({ length: 384 }, () => 0);
+
+    await expect(
+      fetchNearestPool(unusedDatabase, { embedding, excludeIds: [], size: 0 }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      fetchNearestPool(unusedDatabase, { embedding, excludeIds: [], size: 1.5 }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      fetchNearestPool(unusedDatabase, { embedding, excludeIds: [], size: 501 }),
+    ).rejects.toThrow(RangeError);
   });
 });

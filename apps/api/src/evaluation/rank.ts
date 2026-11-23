@@ -1,10 +1,13 @@
 import type { Database } from '../db/client.js';
 import { findNearestMovies } from '../modules/recommendations/query.js';
 import {
+  DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
   applyExploration,
+  qualityScore,
   selectDiverse,
 } from '../modules/recommendations/select.js';
+import { MAX_QUERY_LIMIT, type ScoredCandidate } from '../modules/recommendations/types.js';
 import type { CatalogEntry } from './load.js';
 
 /** Retrieval depth for the taste ranking and both baselines. */
@@ -13,16 +16,41 @@ export const EVALUATION_CANDIDATES = 100;
 /** Genres taken from a user's train likes to build the genre baseline profile. */
 export const GENRE_PROFILE_SIZE = 3;
 
+/**
+ * Deepest pool the experiments retrieve. It is also the cosine buffer that the
+ * pool-stage tilt sorts before slicing, so a high-quality film just outside the
+ * delivered pool can still enter it.
+ */
+export const EVALUATION_MAX_POOL = 500;
+
 export interface UserRanking {
   showcase: number[];
   popularity: number[];
   genre: number[];
 }
 
-function validateLimit(limit: number): void {
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new RangeError(`limit must be a positive integer, received ${limit}.`);
+function validatePositiveInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive integer, received ${value}.`);
   }
+}
+
+function validateWeight(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(
+      `${name} must be a finite number greater than or equal to 0, received ${value}.`,
+    );
+  }
+}
+
+function validatePenalty(penalty: number): void {
+  if (!Number.isFinite(penalty) || penalty < 0 || penalty > 1) {
+    throw new RangeError(`penalty must be a finite number between 0 and 1, received ${penalty}.`);
+  }
+}
+
+function validateLimit(limit: number): void {
+  validatePositiveInteger(limit, 'limit');
 }
 
 /**
@@ -146,4 +174,269 @@ export async function rankUser(
     popularity: rankByPopularity(eligible, EVALUATION_CANDIDATES),
     genre: rankByGenre(eligible, input.likedGenres, EVALUATION_CANDIDATES),
   };
+}
+
+/**
+ * Retrieves the cosine pool in pages, because `findNearestMovies` rejects a
+ * limit above `MAX_QUERY_LIMIT`. Each page excludes the ids already returned,
+ * so the concatenated result is the same ordered top-`size` list a single
+ * unrestricted query would produce: distance ascending, then movie id.
+ */
+export async function fetchNearestPool(
+  db: Database,
+  input: {
+    embedding: readonly number[];
+    excludeIds: readonly number[];
+    size: number;
+  },
+): Promise<ScoredCandidate[]> {
+  validatePositiveInteger(input.size, 'size');
+
+  if (input.size > EVALUATION_MAX_POOL) {
+    throw new RangeError(`size must not exceed ${EVALUATION_MAX_POOL}, received ${input.size}.`);
+  }
+
+  const pool: ScoredCandidate[] = [];
+  const excluded = new Set(input.excludeIds);
+
+  while (pool.length < input.size) {
+    const chunkLimit = Math.min(MAX_QUERY_LIMIT, input.size - pool.length);
+    const chunk = await findNearestMovies(db, {
+      embedding: input.embedding,
+      excludeIds: [...excluded],
+      limit: chunkLimit,
+    });
+
+    for (const candidate of chunk) {
+      pool.push(candidate);
+      excluded.add(candidate.movieId);
+    }
+
+    if (chunk.length < chunkLimit) {
+      break;
+    }
+  }
+
+  return pool;
+}
+
+interface PreparedCandidate {
+  movieId: number;
+  similarity: number;
+  quality: number;
+  scaled: Float64Array;
+  normSquared: number;
+}
+
+function maxAbsoluteComponent(values: readonly number[]): number {
+  let max = 0;
+
+  for (const value of values) {
+    const absolute = Math.abs(value);
+
+    if (absolute > max) {
+      max = absolute;
+    }
+  }
+
+  return max;
+}
+
+/**
+ * Pre-scales each embedding the same way `selectDiverse` does per comparison, so
+ * the greedy loop can reuse it without changing a single floating-point result.
+ */
+function prepareCandidates(candidates: readonly ScoredCandidate[]): PreparedCandidate[] {
+  return candidates.map((candidate) => {
+    const max = maxAbsoluteComponent(candidate.embedding);
+    const scaled = new Float64Array(candidate.embedding.length);
+    let normSquared = 0;
+
+    if (max > 0) {
+      for (let index = 0; index < candidate.embedding.length; index += 1) {
+        const value = (candidate.embedding[index] ?? 0) / max;
+
+        scaled[index] = value;
+        normSquared += value * value;
+      }
+    }
+
+    return {
+      movieId: candidate.movieId,
+      similarity: candidate.similarity,
+      quality: qualityScore(candidate.voteAverage, candidate.voteCount),
+      scaled,
+      normSquared,
+    };
+  });
+}
+
+function preparedCosine(left: PreparedCandidate, right: PreparedCandidate): number {
+  if (left.normSquared === 0 || right.normSquared === 0) {
+    return 0;
+  }
+
+  let dotProduct = 0;
+
+  for (let index = 0; index < left.scaled.length; index += 1) {
+    dotProduct += (left.scaled[index] ?? 0) * (right.scaled[index] ?? 0);
+  }
+
+  return dotProduct / (Math.sqrt(left.normSquared) * Math.sqrt(right.normSquared));
+}
+
+export interface DeepRerankOptions {
+  limit: number;
+  tiltWeight: number;
+  penalty?: number;
+}
+
+/**
+ * The production greedy diversity rerank with a configurable limit and tilt
+ * weight. `selectDiverse` caps the limit at `MAX_RECOMMENDATIONS` and fixes the
+ * tilt, so the evaluation needs its own copy to rank to depth 100 and to sweep
+ * the tilt. Score arithmetic and tie-breaking mirror `selectDiverse` exactly;
+ * `rank.test.ts` asserts the first four picks match it.
+ */
+export function deepRerank(
+  candidates: readonly ScoredCandidate[],
+  options: DeepRerankOptions,
+): number[] {
+  validatePositiveInteger(options.limit, 'limit');
+  validateWeight(options.tiltWeight, 'tiltWeight');
+
+  const penalty = options.penalty ?? DEFAULT_DIVERSITY_PENALTY;
+
+  validatePenalty(penalty);
+
+  const prepared = prepareCandidates(candidates);
+  const baseScores = prepared.map(
+    (candidate) => candidate.similarity + options.tiltWeight * candidate.quality,
+  );
+  const selected = new Array<boolean>(prepared.length).fill(false);
+  const maxSelectedSimilarity = new Array<number>(prepared.length).fill(Number.NEGATIVE_INFINITY);
+  const ranked: number[] = [];
+  let selectedCount = 0;
+
+  while (ranked.length < options.limit && ranked.length < prepared.length) {
+    let bestIndex = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    let bestMovieId = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index < prepared.length; index += 1) {
+      if (selected[index] === true) {
+        continue;
+      }
+
+      const baseScore = baseScores[index] ?? 0;
+      const score =
+        selectedCount === 0 ? baseScore : baseScore - penalty * (maxSelectedSimilarity[index] ?? 0);
+      const movieId = prepared[index]?.movieId ?? 0;
+
+      if (score > bestScore || (score === bestScore && movieId < bestMovieId)) {
+        bestIndex = index;
+        bestScore = score;
+        bestMovieId = movieId;
+      }
+    }
+
+    if (bestIndex === -1) {
+      break;
+    }
+
+    const picked = prepared[bestIndex];
+
+    if (picked === undefined) {
+      break;
+    }
+
+    selected[bestIndex] = true;
+    ranked.push(bestMovieId);
+    selectedCount += 1;
+
+    for (let index = 0; index < prepared.length; index += 1) {
+      if (selected[index] === true) {
+        continue;
+      }
+
+      const other = prepared[index];
+
+      if (other === undefined) {
+        continue;
+      }
+
+      const similarity = preparedCosine(picked, other);
+
+      if (similarity > (maxSelectedSimilarity[index] ?? Number.NEGATIVE_INFINITY)) {
+        maxSelectedSimilarity[index] = similarity;
+      }
+    }
+  }
+
+  return ranked;
+}
+
+/**
+ * Orders a candidate buffer by `similarity + weight * quality`, tie-breaking by
+ * movie id. Unlike the rerank tilt, this changes which films the pool contains:
+ * the experiments slice the buffer afterwards.
+ */
+export function tiltPool(
+  candidates: readonly ScoredCandidate[],
+  weight: number,
+): ScoredCandidate[] {
+  validateWeight(weight, 'weight');
+
+  return [...candidates].sort((left, right) => {
+    const difference =
+      right.similarity +
+      weight * qualityScore(right.voteAverage, right.voteCount) -
+      (left.similarity + weight * qualityScore(left.voteAverage, left.voteCount));
+
+    if (difference !== 0) {
+      return difference;
+    }
+
+    return left.movieId - right.movieId;
+  });
+}
+
+export interface RankingSettings {
+  /** Number of candidates the pool keeps after ordering. */
+  poolSize: number;
+  /** Quality tilt applied to the pool ordering; 0 keeps pure cosine order. */
+  poolTiltWeight: number;
+  /** Quality tilt applied inside the greedy rerank. */
+  tiltWeight: number;
+  /** Maximum length of the returned ranking (MRR scans all of it). */
+  depth: number;
+}
+
+/**
+ * The parameterised experiment path: order the buffer (optionally with the
+ * pool-stage quality tilt), keep `poolSize` candidates, then rerun the greedy
+ * diversity rank to `depth`. The production constants remain the defaults
+ * wherever this is not called.
+ */
+export function rankCandidates(
+  buffer: readonly ScoredCandidate[],
+  settings: RankingSettings,
+): number[] {
+  validatePositiveInteger(settings.poolSize, 'poolSize');
+  validateWeight(settings.poolTiltWeight, 'poolTiltWeight');
+  validateWeight(settings.tiltWeight, 'tiltWeight');
+  validatePositiveInteger(settings.depth, 'depth');
+
+  const ordered =
+    settings.poolTiltWeight === 0 ? buffer : tiltPool(buffer, settings.poolTiltWeight);
+  const pool = ordered.slice(0, Math.min(settings.poolSize, ordered.length));
+
+  if (pool.length === 0) {
+    return [];
+  }
+
+  return deepRerank(pool, {
+    limit: Math.min(settings.depth, pool.length),
+    tiltWeight: settings.tiltWeight,
+  });
 }
