@@ -46,6 +46,8 @@ const baseRow = {
   director: 'Aki Kaurismäki',
   poster_path: '/ojDg0PGvs6R9xYFodRct2kdI6wC.jpg',
   keywords: 'prison|underdog|helsinki, finland',
+  imdb_rating: '7.4',
+  imdb_votes: '10105.0',
 };
 
 const CANDIDATE: QualifiedMovie = {
@@ -157,8 +159,50 @@ describe('toSnapshotMovie', () => {
       popularity: 3.378,
       voteAverage: 7.1,
       voteCount: 382,
+      imdbRating: 7.4,
+      imdbVotes: 10105,
       embedding: null,
       embeddingVersion: null,
+    });
+  });
+
+  it('keeps blank or unparseable IMDb values as null', () => {
+    expect(toSnapshotMovie({ ...baseRow, imdb_rating: '', imdb_votes: '' })).toMatchObject({
+      imdbRating: null,
+      imdbVotes: null,
+    });
+    expect(toSnapshotMovie({ ...baseRow, imdb_rating: 'null', imdb_votes: 'null' })).toMatchObject({
+      imdbRating: null,
+      imdbVotes: null,
+    });
+    expect(
+      toSnapshotMovie({ ...baseRow, imdb_rating: 'not-a-number', imdb_votes: 'lots' }),
+    ).toMatchObject({ imdbRating: null, imdbVotes: null });
+    expect(
+      toSnapshotMovie({ ...baseRow, imdb_rating: 'Infinity', imdb_votes: 'Infinity' }),
+    ).toMatchObject({ imdbRating: null, imdbVotes: null });
+  });
+
+  it('clamps IMDb ratings to the 0-10 range', () => {
+    expect(toSnapshotMovie({ ...baseRow, imdb_rating: '-1.5' })).toMatchObject({
+      imdbRating: 0,
+    });
+    expect(toSnapshotMovie({ ...baseRow, imdb_rating: '10.5' })).toMatchObject({
+      imdbRating: 10,
+    });
+    expect(toSnapshotMovie({ ...baseRow, imdb_rating: '8.7' })).toMatchObject({
+      imdbRating: 8.7,
+    });
+  });
+
+  it('rounds IMDb votes to integers and rejects out-of-range counts', () => {
+    expect(toSnapshotMovie({ ...baseRow, imdb_votes: '1234.6' })).toMatchObject({
+      imdbVotes: 1235,
+    });
+    expect(toSnapshotMovie({ ...baseRow, imdb_votes: '0.0' })).toMatchObject({ imdbVotes: 0 });
+    expect(toSnapshotMovie({ ...baseRow, imdb_votes: '-1' })).toMatchObject({ imdbVotes: null });
+    expect(toSnapshotMovie({ ...baseRow, imdb_votes: '2147483648' })).toMatchObject({
+      imdbVotes: null,
     });
   });
 
@@ -323,6 +367,8 @@ describe('prepareSnapshot', () => {
       director: 'Aki Kaurismäki',
       posterPath: '/a.jpg',
       popularity: 10.5,
+      imdbRating: 7.4,
+      imdbVotes: 10105,
     });
   });
 

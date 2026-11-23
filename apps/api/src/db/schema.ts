@@ -15,6 +15,8 @@ export const movies = pgTable('movies', {
   popularity: real('popularity'),
   voteAverage: real('vote_average'),
   voteCount: integer('vote_count'),
+  imdbRating: real('imdb_rating'),
+  imdbVotes: integer('imdb_votes'),
   embedding: vector('embedding', { dimensions: 384 }),
   embeddingVersion: text('embedding_version'),
 });

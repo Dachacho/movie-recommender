@@ -10,6 +10,8 @@ export const SNAPSHOT_COLUMNS = [
   'title',
   'vote_average',
   'vote_count',
+  'imdb_rating',
+  'imdb_votes',
   'status',
   'release_date',
   'runtime',
@@ -35,6 +37,7 @@ const RUNTIME_MAX = 100_000;
 const MIN_YEAR = 1870;
 const MAX_YEAR = 2100;
 const MAX_MOVIE_ID = 2_147_483_647;
+const MAX_VOTES = 2_147_483_647;
 
 /** A movie that passed validation and is rankable for curation. */
 export type QualifiedMovie = NewMovie & { popularity: number };
@@ -117,6 +120,22 @@ function parseInteger(value: string | undefined): number | null {
   const parsed = parseNumber(value);
 
   return parsed === null ? null : Math.trunc(parsed);
+}
+
+function parseImdbRating(value: string | undefined): number | null {
+  const rating = parseNumber(value);
+
+  return rating === null ? null : Math.min(10, Math.max(0, rating));
+}
+
+function parseImdbVotes(value: string | undefined): number | null {
+  const votes = parseNumber(value);
+
+  if (votes === null || votes < 0 || votes > MAX_VOTES) {
+    return null;
+  }
+
+  return Math.round(votes);
 }
 
 function parseReleaseYear(value: string | undefined): number | null {
@@ -218,6 +237,8 @@ export function toSnapshotMovie(row: Record<string, string>): QualifiedMovie | n
     popularity,
     voteAverage: parseNumber(row['vote_average']),
     voteCount: parseInteger(row['vote_count']),
+    imdbRating: parseImdbRating(row['imdb_rating']),
+    imdbVotes: parseImdbVotes(row['imdb_votes']),
     embedding: null,
     embeddingVersion: null,
   };

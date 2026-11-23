@@ -61,6 +61,20 @@ Popularity is a curation-at-import signal only. It is never an eligibility gate 
 ranking input at recommendation time, per ARCHITECTURE.md. Importing the full ~1.3M-row
 catalog remains deferred to productionization.
 
+## Evaluation-only signals
+
+The snapshot also carries `imdb_rating` and `imdb_votes`. The importer stores them in the
+nullable `imdb_rating` (`real`) and `imdb_votes` (`integer`) columns as offline
+evaluation signals only. Blank or unparseable values become null, votes are rounded to
+whole counts, and ratings are clamped to 0–10. They do not affect curation, ranking or
+recommendations and are not exposed by any API response schema.
+
+Re-import evidence (2026-11-23 run, after the 2026-11-21 base run): the catalog
+selection is unchanged — ordered-id checksum identical
+(`8457d5975059380cd4594818c33ecac6`, 40,000 unique ids) — and 32,117 rows carry
+both IMDb values, with 7,883 null where the source fields are blank. Spot checks:
+Ariel `7.4/10105`, The Dark Knight `9.1/3252573`, Oppenheimer `8.2/1113868`.
+
 ## Embeddings
 
 Every row is embedded with the pinned pipeline already used by the importer:

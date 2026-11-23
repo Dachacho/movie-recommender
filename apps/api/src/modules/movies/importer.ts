@@ -88,6 +88,8 @@ export async function importMovies({
           popularity: sql.raw('excluded."popularity"'),
           voteAverage: sql.raw('excluded."vote_average"'),
           voteCount: sql.raw('excluded."vote_count"'),
+          imdbRating: sql.raw('excluded."imdb_rating"'),
+          imdbVotes: sql.raw('excluded."imdb_votes"'),
           embedding: sql.raw('excluded."embedding"'),
           embeddingVersion: sql.raw('excluded."embedding_version"'),
         },
