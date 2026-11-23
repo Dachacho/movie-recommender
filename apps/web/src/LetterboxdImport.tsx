@@ -117,9 +117,9 @@ export function LetterboxdImport({
         continue;
       }
 
-      // The filename is not a reliable signal between exports, so the header
-      // decides how the matched rows are applied to the guest profile.
-      const mode = detectLetterboxdFileType(csv);
+      // Ratings are identified by the header; a watchlist export shares
+      // watches.csv's header, so its original filename is the disambiguator.
+      const mode = detectLetterboxdFileType(csv, file.name);
       let report: LetterboxdImportResponse;
 
       try {
@@ -178,6 +178,11 @@ export function LetterboxdImport({
           }}
         />
       </label>
+
+      <p className="status import__status">
+        Keep the export&apos;s original file names so ratings, watches and watchlist files are
+        recognized.
+      </p>
 
       {pending && <p className="status import__status">Matching your films against the catalog…</p>}
 

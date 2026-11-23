@@ -68,8 +68,11 @@ function renderLibrary(profile: GuestProfile = createProfile()): void {
   render(<Library profile={profile} />);
 }
 
-function fileWithText(text: string): File {
-  return { text: async () => text } as unknown as File;
+function fileWithText(text: string, name?: string): File {
+  return {
+    text: async () => text,
+    ...(name === undefined ? {} : { name }),
+  } as unknown as File;
 }
 
 function importInput(): HTMLInputElement {
@@ -87,6 +90,11 @@ describe('Letterboxd import', () => {
     fetchMock.mockResolvedValue(jsonResponse(IMPORT_RESPONSE));
 
     renderLibrary(profile);
+    expect(
+      screen.getByText(
+        "Keep the export's original file names so ratings, watches and watchlist files are recognized.",
+      ),
+    ).toBeTruthy();
     selectFile(fileWithText(CSV_TEXT));
 
     expect(await screen.findByText('Imported 2 ratings and 1 watching.')).toBeTruthy();
@@ -309,7 +317,8 @@ describe('Letterboxd import', () => {
     const profile = createProfile();
     const setWatched = vi.spyOn(profile, 'setWatched');
     const setRating = vi.spyOn(profile, 'setRating');
-    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,\n2,Moonlight,2016,';
+    const watchlistCsv =
+      'Date,Name,Year,Letterboxd URI\n2024-01-04,Heat,1995,\n2024-01-04,Moonlight,2016,';
 
     fetchMock.mockResolvedValue(
       jsonResponse({
@@ -323,7 +332,7 @@ describe('Letterboxd import', () => {
     );
 
     renderLibrary(profile);
-    selectFile(fileWithText(watchlistCsv));
+    selectFile(fileWithText(watchlistCsv, 'watchlist.csv'));
 
     expect(await screen.findByText('Added 2 films to your watchlist.')).toBeTruthy();
     expect(submittedBody(fetchMock)).toEqual({ csv: watchlistCsv });
@@ -348,7 +357,7 @@ describe('Letterboxd import', () => {
     );
 
     renderLibrary(profile);
-    selectFile(fileWithText(watchesCsv));
+    selectFile(fileWithText(watchesCsv, 'watches.csv'));
 
     expect(await screen.findByText('Imported 0 ratings and 1 watching.')).toBeTruthy();
     await expect(profile.getWatchedIds()).resolves.toEqual([12]);
@@ -356,15 +365,20 @@ describe('Letterboxd import', () => {
     await expect(profile.getWatchlistIds()).resolves.toEqual([]);
   });
 
-  it('maps a ratings file and a watchlist file selected together separately', async () => {
+  it('maps ratings, watches and watchlist files selected together separately', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();
     const setWatched = vi.spyOn(profile, 'setWatched');
+    const addToWatchlist = vi.spyOn(profile, 'addToWatchlist');
     const ratingsCsv =
       'Date,Name,Year,Letterboxd URI,Rating\n' +
       '2024-01-01,Arrival,2016,,4.5\n' +
       '2024-01-02,Heat,1995,,3';
-    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,\n2,Moonlight,2016,';
+    const watchesCsv = 'Date,Name,Year,Letterboxd URI\n2024-01-03,Alien,1979,';
+    // Real watchlist exports share watches.csv's header and are told apart
+    // only by their original filename.
+    const watchlistCsv =
+      'Date,Name,Year,Letterboxd URI\n2024-01-04,Heat,1995,\n2024-01-04,Moonlight,2016,';
 
     fetchMock.mockImplementation(async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as { csv: string };
@@ -380,6 +394,14 @@ describe('Letterboxd import', () => {
         });
       }
 
+      if (body.csv === watchesCsv) {
+        return jsonResponse({
+          matched: [{ movieId: 14, title: 'Alien', releaseYear: 1979, rating: null }],
+          unmatched: [],
+          stats: { rows: 1, matched: 1, unmatched: 0, invalid: 0 },
+        });
+      }
+
       return jsonResponse({
         matched: [
           { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
@@ -392,15 +414,21 @@ describe('Letterboxd import', () => {
 
     renderLibrary(profile);
     fireEvent.change(importInput(), {
-      target: { files: [fileWithText(ratingsCsv), fileWithText(watchlistCsv)] },
+      target: {
+        files: [
+          fileWithText(ratingsCsv, 'ratings.csv'),
+          fileWithText(watchesCsv, 'watches.csv'),
+          fileWithText(watchlistCsv, 'watchlist.csv'),
+        ],
+      },
     });
 
     expect(
       await screen.findByText(
-        'Imported 2 ratings and 0 watchings; added 2 films to your watchlist.',
+        'Imported 2 ratings and 1 watching; added 2 films to your watchlist.',
       ),
     ).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(
       (await profile.getRatings()).map(({ movieId, rating }) => ({ movieId, rating })),
     ).toEqual([
@@ -408,15 +436,16 @@ describe('Letterboxd import', () => {
       { movieId: 12, rating: 3 },
     ]);
     await expect(profile.getWatchlistIds()).resolves.toEqual([12, 13]);
-    await expect(profile.getWatchedIds()).resolves.toEqual([]);
-    expect(setWatched).not.toHaveBeenCalled();
+    await expect(profile.getWatchedIds()).resolves.toEqual([14]);
+    expect(setWatched.mock.calls.map(([movieId]) => movieId)).toEqual([14]);
+    expect(addToWatchlist.mock.calls.map(([movieId]) => movieId)).toEqual([12, 13]);
     expect(importInput().disabled).toBe(false);
   });
 
   it('keeps an earlier successful file when a later file fails', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();
-    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,';
+    const watchlistCsv = 'Date,Name,Year,Letterboxd URI\n2024-01-04,Heat,1995,';
     const brokenCsv = 'not a letterboxd export';
 
     fetchMock.mockImplementation(async (_input, init) => {
@@ -438,7 +467,9 @@ describe('Letterboxd import', () => {
 
     renderLibrary(profile);
     fireEvent.change(importInput(), {
-      target: { files: [fileWithText(watchlistCsv), fileWithText(brokenCsv)] },
+      target: {
+        files: [fileWithText(watchlistCsv, 'watchlist.csv'), fileWithText(brokenCsv, 'broken.csv')],
+      },
     });
 
     expect(await screen.findByText('Added 1 film to your watchlist.')).toBeTruthy();
@@ -472,7 +503,9 @@ describe('Letterboxd import', () => {
     const watchlistToggle = await screen.findByRole('button', { name: 'Heat: watchlist' });
     expect(watchlistToggle.getAttribute('aria-pressed')).toBe('false');
 
-    selectFile(fileWithText('Position,Name,Year,Letterboxd URI\n1,Heat,1995,'));
+    selectFile(
+      fileWithText('Date,Name,Year,Letterboxd URI\n2024-01-04,Heat,1995,', 'watchlist.csv'),
+    );
 
     expect(await screen.findByText('Added 1 film to your watchlist.')).toBeTruthy();
     await waitFor(() => {

@@ -5,6 +5,9 @@ const RATINGS_ROW = '2024-01-01,Heat,1995,https://letterboxd.com/film/heat/,4.5'
 const WATCHES_ROW = '2024-01-01,Heat,1995,https://letterboxd.com/film/heat/';
 const WATCHLIST_ROW = '1,Heat,1995,https://letterboxd.com/film/heat/';
 
+/** The header watches.csv and real watchlist.csv exports share. */
+const SHARED_HEADER = 'Date,Name,Year,Letterboxd URI';
+
 describe('detectLetterboxdFileType', () => {
   it('detects a ratings export from its Rating column', () => {
     const csv = `Date,Name,Year,Letterboxd URI,Rating\n${RATINGS_ROW}\n`;
@@ -12,13 +15,29 @@ describe('detectLetterboxdFileType', () => {
     expect(detectLetterboxdFileType(csv)).toBe('ratings');
   });
 
-  it('detects a watches export from its Date/Name/Year header', () => {
-    const csv = `Date,Name,Year,Letterboxd URI\n${WATCHES_ROW}\n`;
+  it('uses the filename to tell a watchlist export from a watches export', () => {
+    const csv = `${SHARED_HEADER}\n${WATCHES_ROW}\n`;
 
+    expect(detectLetterboxdFileType(csv, 'watchlist.csv')).toBe('watchlist');
+    expect(detectLetterboxdFileType(csv, 'my-watchlist-export.csv')).toBe('watchlist');
+    expect(detectLetterboxdFileType(csv, 'Watchlist.CSV')).toBe('watchlist');
+  });
+
+  it('falls back to watched when the shared header has no watchlist filename', () => {
+    const csv = `${SHARED_HEADER}\n${WATCHES_ROW}\n`;
+
+    expect(detectLetterboxdFileType(csv, 'watches.csv')).toBe('watched');
+    expect(detectLetterboxdFileType(csv, 'stuff.csv')).toBe('watched');
     expect(detectLetterboxdFileType(csv)).toBe('watched');
   });
 
-  it('detects a watchlist export from its Position column', () => {
+  it('lets a Rating column win over a watchlist filename', () => {
+    const csv = `${SHARED_HEADER},Rating\n${RATINGS_ROW}\n`;
+
+    expect(detectLetterboxdFileType(csv, 'watchlist.csv')).toBe('ratings');
+  });
+
+  it('still accepts the older Position-header watchlist shape', () => {
     const csv = `Position,Name,Year,Letterboxd URI\n${WATCHLIST_ROW}\n`;
 
     expect(detectLetterboxdFileType(csv)).toBe('watchlist');
