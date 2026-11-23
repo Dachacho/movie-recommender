@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectDiverse } from '../modules/recommendations/select.js';
+import { QUALITY_TILT_WEIGHT, selectDiverse } from '../modules/recommendations/select.js';
 import type { ScoredCandidate } from '../modules/recommendations/types.js';
 import type { CatalogEntry } from './load.js';
 import {
@@ -146,13 +146,13 @@ describe('deepRerank', () => {
     const fixture = parityFixture();
     const production = selectDiverse(fixture, { limit: 4 }).map((pick) => pick.movieId);
 
-    expect(deepRerank(fixture, { limit: 4, tiltWeight: 0.12 })).toEqual(production);
+    expect(deepRerank(fixture, { limit: 4, tiltWeight: QUALITY_TILT_WEIGHT })).toEqual(production);
   });
 
   it('keeps the production top four as the head of a deeper ranking', () => {
     const fixture = parityFixture();
     const production = selectDiverse(fixture, { limit: 4 }).map((pick) => pick.movieId);
-    const deep = deepRerank(fixture, { limit: 100, tiltWeight: 0.12 });
+    const deep = deepRerank(fixture, { limit: 100, tiltWeight: QUALITY_TILT_WEIGHT });
 
     expect(deep.slice(0, 4)).toEqual(production);
   });

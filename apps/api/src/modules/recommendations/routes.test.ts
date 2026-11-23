@@ -126,8 +126,9 @@ const TASTE_VECTOR = axisEmbedding(0);
 
 /**
  * Points most strongly at axis three (the lowest-reception fixture) while a
- * weaker component points at axis one. Taste alone puts axis four first;
- * halving similarity lets the reception tilt overtake it.
+ * weaker component points at axis one. Taste alone puts axis four first; the
+ * 0.50 production tilt already lifts axis one above it, and halving similarity
+ * widens that gap.
  */
 const EXPLORATION_TASTE_VECTOR = (() => {
   const vector = axisEmbedding(3);
@@ -787,7 +788,7 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
   });
 
   it.each([
-    ['0 keeps taste order', 0, [AXIS_FOUR_ID, AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
+    ['0 keeps the full taste weight', 0, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
     ['0.5 halves the taste weight', 0.5, [AXIS_ONE_ID, AXIS_FOUR_ID, AXIS_THREE_ID, AXIS_TWO_ID]],
     ['1 removes taste from ranking', 1, [AXIS_ONE_ID, AXIS_THREE_ID, AXIS_TWO_ID, AXIS_FOUR_ID]],
   ])('exploration %s', async (_label, exploration, expectedIds) => {

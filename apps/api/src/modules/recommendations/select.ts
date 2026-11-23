@@ -4,13 +4,16 @@ export const DEFAULT_DIVERSITY_PENALTY = 0.3;
 export const MAX_RECOMMENDATIONS = 4;
 
 /**
- * Interim, product-approved strength of the reception tilt. Within the
- * similarity-retrieved pool this is meaningfully reception-steered: candidates
- * within 0.12 cosine similarity can be reordered by reception, though taste
- * still selects the pool and larger similarity gaps still win. Retune against
- * held-out evaluation evidence before changing it.
+ * Product-approved reception tilt strength, raised from 0.12 to 0.50 on the
+ * held-out evidence in docs/evaluation-experiments-2026-11-23.md: the rerank
+ * tilt sweep was monotone from 0.05 to 0.50, and 0.50 beat the genre baseline on
+ * every metric while still drawing a taste-selected pool. Within the
+ * similarity-retrieved pool candidates within ~0.50 cosine similarity can be
+ * reordered by reception, though taste still selects the pool and larger
+ * similarity gaps still win. It remains interim pending future evaluation
+ * rounds; retune against held-out evidence before changing it.
  */
-export const QUALITY_TILT_WEIGHT = 0.12;
+export const QUALITY_TILT_WEIGHT = 0.5;
 
 /**
  * Divisor that scales the log vote count. log10(1 + 10M) = 7.0, so a ~10M-vote

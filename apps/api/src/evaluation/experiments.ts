@@ -388,8 +388,12 @@ function renderReport(input: {
   lines.push('# Ranking experiments — MovieLens held-out ratings');
   lines.push('');
   lines.push('Controlled offline experiments on the committed evaluation split. No served code or');
-  lines.push('production constant changed: every config is computed inside the harness, and the');
-  lines.push('production weights remain the defaults.');
+  lines.push('production constant is modified by running the harness: every config is computed');
+  lines.push('inside it. The rows labelled "(production)" use the CURRENT production constants,');
+  lines.push(
+    `so they track whatever the code says today (currently tilt ${String(QUALITY_TILT)});`,
+  );
+  lines.push('rows with explicit literal tilt values are fixed experiment parameters.');
   lines.push('');
   lines.push('## Setup (identical to the committed baseline run)');
   lines.push('');
@@ -480,7 +484,7 @@ function renderReport(input: {
     )} cosine buffer and slices the pool, rather than issuing a SQL \`ORDER BY similarity + tilt * quality\` over the whole catalog. A film outside that buffer could enter a true SQL-side ordering.`,
   );
   lines.push(
-    '- "Tilt at pool + rerank" applies the 0.12 tilt twice (pool ordering and greedy rerank); "tilt at pool only" moves it to the pool stage. Both are reported because the brief asked for the additive variant and the moved variant isolates the diagnosis.',
+    '- "Tilt at pool + rerank" applies the production tilt twice (pool ordering and greedy rerank); "tilt at pool only" moves it to the pool stage. Both are reported because the brief asked for the additive variant and the moved variant isolates the diagnosis.',
   );
   lines.push(
     '- Diversity penalty stays at the production 0.3 in every config; only pool size and quality tilt vary.',
@@ -623,7 +627,7 @@ async function main(): Promise<void> {
         ],
       },
       {
-        title: '2. Pool size (tilt 0.12 at rerank)',
+        title: `2. Pool size (tilt ${String(QUALITY_TILT)} at rerank)`,
         blurb:
           'Does deeper cosine retrieval close the gap? Each pool is a prefix of the same top-500 buffer.',
         rows: [
@@ -637,9 +641,11 @@ async function main(): Promise<void> {
       },
       {
         title: '3. Quality tilt at the pool stage',
-        blurb: `Pool ordering is \`similarity + 0.12 * quality\` over the top-${String(
+        blurb: `Pool ordering is \`similarity + ${String(
+          QUALITY_TILT,
+        )} * quality\` over the top-${String(
           EVALUATION_MAX_POOL,
-        )} cosine buffer, then the pool is sliced. "Add" keeps the rerank tilt at 0.12; "only" moves it to the pool stage.`,
+        )} cosine buffer, then the pool is sliced. "Add" keeps the production rerank tilt; "only" moves it to the pool stage.`,
         rows: [
           row('Pool 50 — cosine order (tilt at rerank only)', get('pool-50'), 'reference'),
           row('Pool 50 — tilt at pool + rerank', get('pool-50-tilt-add')),
@@ -657,11 +663,11 @@ async function main(): Promise<void> {
           'Quality tilt inside the greedy rerank, at the production pool and at the baseline-parity pool.',
         rows: [
           row('Pool 50 — tilt 0.05', get('pool-50-t005')),
-          row('Pool 50 — tilt 0.12 (production)', get('pool-50')),
+          row(`Pool 50 — tilt ${String(QUALITY_TILT)} (production)`, get('pool-50')),
           row('Pool 50 — tilt 0.25', get('pool-50-t025')),
           row('Pool 50 — tilt 0.50', get('pool-50-t050')),
           row('Pool 100 — tilt 0.05', get('pool-100-t005')),
-          row('Pool 100 — tilt 0.12', get('pool-100')),
+          row(`Pool 100 — tilt ${String(QUALITY_TILT)}`, get('pool-100')),
           row('Pool 100 — tilt 0.25', get('pool-100-t025')),
           row('Pool 100 — tilt 0.50', get('pool-100-t050')),
           row('Popularity baseline', popularityMetrics, 'reference'),

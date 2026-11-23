@@ -57,8 +57,8 @@ describe('qualityScore', () => {
 
   it('still gives thin-data high averages a notable, accepted tilt', () => {
     // 7.8 average on only 5 votes: log10(6) / 6 = 0.129 -> 0.3 * 0.129 +
-    // 0.7 * 0.78 = 0.585; tilt = 0.12 * 0.585 = 0.070. Enough to reverse a
-    // 0.07 similarity lead — accepted interim behavior pending evaluation.
+    // 0.7 * 0.78 = 0.585; tilt = 0.50 * 0.585 = 0.292. Enough to reverse a
+    // 0.29 similarity lead — accepted interim behavior pending evaluation.
     expect(qualityScore(7.8, 5)).toBeCloseTo(0.58491, 5);
   });
 
@@ -153,14 +153,14 @@ describe('selectDiverse', () => {
 
   describe('quality tilt', () => {
     it('keeps a clear taste match ahead of a more popular, poorly matched film', () => {
-      // The 0.15 similarity gap exceeds the maximum possible 0.12 reception swing.
+      // The 0.6 similarity gap exceeds the maximum possible 0.50 reception swing.
       const result = selectDiverse(
-        [candidate(1, TASTE_ALIGNED, 0.95, 5, 10), candidate(2, ORTHOGONAL, 0.8, 9.5, 2_000_000)],
+        [candidate(1, TASTE_ALIGNED, 0.95, 5, 10), candidate(2, ORTHOGONAL, 0.35, 9.5, 2_000_000)],
         { limit: 1 },
       );
 
       expect(result.map((pick) => pick.movieId)).toEqual([1]);
-      expect(result[0]?.score).toBeCloseTo(0.99825, 5);
+      expect(result[0]?.score).toBeCloseTo(1.1510348, 6);
     });
 
     it('tie-breaks comparable taste matches toward the better-received film', () => {
@@ -170,14 +170,14 @@ describe('selectDiverse', () => {
       );
 
       expect(result.map((pick) => pick.movieId)).toEqual([20, 10]);
-      expect(result[0]?.score).toBeCloseTo(0.88939, 5);
-      expect(result[1]?.score).toBeCloseTo(0.85225, 5);
+      expect(result[0]?.score).toBeCloseTo(1.1724764, 6);
+      expect(result[1]?.score).toBeCloseTo(1.0176893, 6);
     });
 
     it('keeps a taste-matched film eligible without reception data', () => {
-      // A near-max reception film is 0.12 behind at most, inside this 0.15 gap.
+      // A near-max reception film is 0.50 behind at most, inside this 0.60 gap.
       const result = selectDiverse(
-        [candidate(1, TASTE_ALIGNED, 0.95), candidate(2, ORTHOGONAL, 0.8, 9.9, 3_000_000)],
+        [candidate(1, TASTE_ALIGNED, 0.95), candidate(2, ORTHOGONAL, 0.35, 9.9, 3_000_000)],
         { limit: 1 },
       );
 
@@ -195,7 +195,7 @@ describe('selectDiverse', () => {
 
     it('ranks a cold-start pool by rank score plus the tilt, deterministically', () => {
       // rankAsRelevance assigns 1 - index/pool.length, so a 50-film pool has 0.02 gaps;
-      // a 0.12 tilt can therefore lift a film by up to six pool ranks.
+      // a 0.50 tilt can therefore lift a film by up to 25 pool ranks.
       const pool = [
         candidate(1, TASTE_ALIGNED, 1),
         candidate(2, ORTHOGONAL, 0.98, 10, 10_000_000),
