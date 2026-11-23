@@ -2,11 +2,13 @@ import type { MovieCard } from '@movie-recommender/shared';
 import { describe, expect, it } from 'vitest';
 import {
   COOLDOWN_MS,
+  MAX_CANDIDATE_IDS,
   MAX_EXCLUDE_IDS,
   buildRecommendationInput,
   buildRefreshAllInput,
   buildReplacementInput,
   mergeReplacement,
+  rewatchCandidateIds,
 } from './recommendationInput';
 
 const TASTE_VECTOR = Array.from({ length: 384 }, (_value, index) => (index === 0 ? 1 : 0));
@@ -412,6 +414,164 @@ describe('buildRefreshAllInput', () => {
       excludeIds: [1, 3, 7],
     });
     expect(droppedIds).toEqual([]);
+  });
+});
+
+describe('rewatchCandidateIds', () => {
+  it('keeps ratings at or above four stars, sorted ascending', () => {
+    expect(
+      rewatchCandidateIds([
+        { movieId: 7, rating: 4 },
+        { movieId: 2, rating: 5 },
+        { movieId: 5, rating: 3.5 },
+        { movieId: 3, rating: 4.5 },
+        { movieId: 1, rating: 0.5 },
+      ]),
+    ).toEqual([2, 3, 7]);
+  });
+
+  it('includes an exact four-star rating, the half-star threshold', () => {
+    expect(rewatchCandidateIds([{ movieId: 4, rating: 4 }])).toEqual([4]);
+  });
+
+  it('excludes a 3.5 rating', () => {
+    expect(rewatchCandidateIds([{ movieId: 4, rating: 3.5 }])).toEqual([]);
+  });
+
+  it('returns no candidates without ratings', () => {
+    expect(rewatchCandidateIds([])).toEqual([]);
+  });
+
+  it('deduplicates repeated movie ids', () => {
+    expect(
+      rewatchCandidateIds([
+        { movieId: 3, rating: 4 },
+        { movieId: 3, rating: 5 },
+      ]),
+    ).toEqual([3]);
+  });
+
+  it('returns every qualifying id; the request builder applies the API pool cap', () => {
+    const ratings = Array.from({ length: 10_005 }, (_value, index) => ({
+      movieId: index + 1,
+      rating: 4,
+    }));
+
+    const ids = rewatchCandidateIds(ratings);
+
+    expect(ids).toHaveLength(10_005);
+    expect(ids[0]).toBe(1);
+    expect(ids.at(-1)).toBe(10_005);
+  });
+});
+
+describe('source-scoped requests', () => {
+  it('builds a watchlist request with candidateIds and the normal exclusions', () => {
+    const { request, droppedIds, poolDroppedIds } = buildRecommendationInput({
+      ...BASE,
+      ratedIds: [1],
+      watchedIds: [2],
+      tasteVector: TASTE_VECTOR,
+      prompt: '  comfort  ',
+      cooldownIds: [9],
+      source: { kind: 'watchlist', candidateIds: [8, 3, 8] },
+    });
+
+    expect(request).toEqual({
+      source: 'watchlist',
+      limit: 4,
+      candidateIds: [3, 8],
+      prompt: 'comfort',
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 2, 9],
+    });
+    expect(droppedIds).toEqual([]);
+    expect(poolDroppedIds).toEqual([]);
+  });
+
+  it('builds a rewatch request that excludes only visible, replaced and cooldown ids', () => {
+    const { request, droppedIds, poolDroppedIds } = buildReplacementInput({
+      ratedIds: [1, 6, 7],
+      watchedIds: [2, 6],
+      tasteVector: TASTE_VECTOR,
+      prompt: 'comfort',
+      visibleMovieIds: [1, 6],
+      replacedMovieId: 1,
+      cooldownIds: [9],
+      source: { kind: 'rewatch', candidateIds: [1, 6, 7] },
+    });
+
+    expect(request).toEqual({
+      source: 'list',
+      limit: 4,
+      candidateIds: [1, 6, 7],
+      prompt: 'comfort',
+      tasteVector: TASTE_VECTOR,
+      excludeIds: [1, 6, 9],
+    });
+    // Rated and watched ids must not be excluded: they are the candidate pool.
+    expect(request.excludeIds).not.toContain(7);
+    expect(request.excludeIds).not.toContain(2);
+    expect(droppedIds).toEqual([]);
+    expect(poolDroppedIds).toEqual([]);
+  });
+
+  it('keeps the round source and candidate pool in a refresh-all request', () => {
+    const { request } = buildRefreshAllInput({
+      ...BASE,
+      visibleMovieIds: [1],
+      cooldownIds: [2],
+      source: { kind: 'watchlist', candidateIds: [1, 5] },
+    });
+
+    expect(request).toMatchObject({
+      source: 'watchlist',
+      candidateIds: [1, 5],
+      excludeIds: [1, 2],
+    });
+  });
+
+  it('throws for a watchlist or rewatch request without candidates', () => {
+    expect(() =>
+      buildRecommendationInput({ ...BASE, source: { kind: 'watchlist', candidateIds: [] } }),
+    ).toThrow(/candidateIds/);
+    expect(() =>
+      buildRecommendationInput({ ...BASE, source: { kind: 'rewatch', candidateIds: [] } }),
+    ).toThrow(/candidateIds/);
+  });
+
+  it('caps watchlist candidateIds at the endpoint limit and reports the trimmed pool', () => {
+    const candidateIds = Array.from({ length: 10_005 }, (_value, index) => index + 1);
+
+    const { request, droppedIds, poolDroppedIds } = buildRecommendationInput({
+      ...BASE,
+      source: { kind: 'watchlist', candidateIds: [...candidateIds, 1] },
+    });
+
+    expect(request.candidateIds).toHaveLength(MAX_CANDIDATE_IDS);
+    expect(request.candidateIds?.[0]).toBe(1);
+    expect(request.candidateIds?.at(-1)).toBe(10_000);
+    expect(request.candidateIds).not.toContain(10_001);
+    expect(droppedIds).toEqual([]);
+    expect(poolDroppedIds).toEqual([10_001, 10_002, 10_003, 10_004, 10_005]);
+  });
+
+  it('caps the rewatch pool at the endpoint limit and reports the trimmed pool', () => {
+    const ratings = Array.from({ length: 10_005 }, (_value, index) => ({
+      movieId: index + 1,
+      rating: 4,
+    }));
+
+    const { request, droppedIds, poolDroppedIds } = buildRecommendationInput({
+      ...BASE,
+      source: { kind: 'rewatch', candidateIds: rewatchCandidateIds(ratings) },
+    });
+
+    expect(request.source).toBe('list');
+    expect(request.candidateIds).toHaveLength(MAX_CANDIDATE_IDS);
+    expect(request.candidateIds?.at(-1)).toBe(10_000);
+    expect(droppedIds).toEqual([]);
+    expect(poolDroppedIds).toEqual([10_001, 10_002, 10_003, 10_004, 10_005]);
   });
 });
 

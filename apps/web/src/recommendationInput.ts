@@ -6,6 +6,23 @@ export const COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 /** Mirrors the `excludeIds` limit in `recommendationRequestSchema`. */
 export const MAX_EXCLUDE_IDS = 10_000;
 
+/** Mirrors the `candidateIds` limit in `recommendationRequestSchema`. */
+export const MAX_CANDIDATE_IDS = 10_000;
+
+/** Ratings at or above four stars form the rewatch shortlist. */
+export const REWATCH_MIN_RATING = 4;
+
+/**
+ * Where a round's picks come from. `rewatch` is a guest-facing source that
+ * rides the API's `list` source: its candidates are films the guest rated.
+ */
+export type RecommendationSourceKind = 'catalog' | 'watchlist' | 'rewatch';
+
+export type SourceSelection =
+  | { kind: 'catalog' }
+  | { kind: 'watchlist'; candidateIds: readonly number[] }
+  | { kind: 'rewatch'; candidateIds: readonly number[] };
+
 interface RequestBase {
   /**
    * Every rated movie id, uncapped. Used only for exclusions: rating a film
@@ -16,6 +33,8 @@ interface RequestBase {
   watchedIds: readonly number[];
   tasteVector: readonly number[] | null;
   prompt: string;
+  /** Defaults to the catalog. Pool sources carry their own candidate ids. */
+  source?: SourceSelection;
 }
 
 export interface RoundRequestInput extends RequestBase {
@@ -26,6 +45,8 @@ export interface RecommendationRequestResult {
   request: RecommendationRequest;
   /** Exclusion ids that did not fit the 10,000-id cap, sorted ascending. */
   droppedIds: number[];
+  /** Candidate ids dropped from the pool by the same cap, sorted ascending. */
+  poolDroppedIds: number[];
 }
 
 export interface ReplacementRequestInput extends RequestBase {
@@ -45,25 +66,74 @@ function uniqueSortedIds(ids: Iterable<number>): number[] {
   return [...new Set(ids)].sort((left, right) => left - right);
 }
 
+function requestSource(source: SourceSelection): RecommendationRequest['source'] {
+  switch (source.kind) {
+    case 'catalog':
+      return 'catalog';
+    case 'watchlist':
+      return 'watchlist';
+    case 'rewatch':
+      return 'list';
+  }
+}
+
+/**
+ * The rewatch shortlist: every film the guest rated four stars or higher,
+ * deduplicated and sorted ascending. The request builder applies the
+ * endpoint's 10,000-id limit and reports what it trimmed.
+ */
+export function rewatchCandidateIds(
+  ratings: readonly { readonly movieId: number; readonly rating: number }[],
+): number[] {
+  const ids = new Set<number>();
+
+  for (const { movieId, rating } of ratings) {
+    if (rating >= REWATCH_MIN_RATING) {
+      ids.add(movieId);
+    }
+  }
+
+  return [...ids].sort((left, right) => left - right);
+}
+
 /**
  * Builds a request from one round's taste data. Exclusions are capped at the
  * endpoint's 10,000-id limit (`recommendationRequestSchema`):
  *
  *   1. visible + replaced ids, unconditionally. They are at most five ids and
  *      a pick must never be dropped from its own exclusion list.
- *   2. rated ids, lowest first.
- *   3. watched ids, lowest first.
+ *   2. rated ids, lowest first (catalog and watchlist only).
+ *   3. watched ids, lowest first (catalog and watchlist only).
  *   4. active cooldowns, lowest first.
+ *
+ * Re-watch candidates are themselves rated films, so excluding rated ids would
+ * empty the pool. A rewatch round therefore excludes only visible/replaced ids
+ * and cooldowns; `candidateIds` already bounds everything else.
  *
  * Classes 2-4 fill the remaining room lowest-first. Ids that do not fit are
  * dropped from each class's own high-id tail and reported in `droppedIds`, so
- * trimming is never silent. The union never exceeds the cap.
+ * trimming is never silent. The union never exceeds the cap. Pool ids beyond
+ * the same cap are trimmed from their high-id tail and reported separately in
+ * `poolDroppedIds`, because they mean "cannot be picked", not "may reappear".
  */
 function buildRequest(
   base: RequestBase,
   requiredIds: readonly number[],
   cooldownIds: readonly number[],
 ): RecommendationRequestResult {
+  const source: SourceSelection = base.source ?? { kind: 'catalog' };
+  const normalizedCandidates =
+    source.kind === 'catalog' ? null : uniqueSortedIds(source.candidateIds);
+
+  if (normalizedCandidates !== null && normalizedCandidates.length === 0) {
+    throw new Error(`candidateIds must not be empty for a ${source.kind} request.`);
+  }
+
+  const candidateIds =
+    normalizedCandidates === null ? null : normalizedCandidates.slice(0, MAX_CANDIDATE_IDS);
+  const poolDroppedIds =
+    normalizedCandidates === null ? [] : normalizedCandidates.slice(MAX_CANDIDATE_IDS);
+
   const trimmedPrompt = base.prompt.trim();
   const excluded = new Set<number>();
   const droppedIds = new Set<number>();
@@ -83,8 +153,12 @@ function buildRequest(
   };
 
   fill(uniqueSortedIds(requiredIds));
-  fill(uniqueSortedIds(base.ratedIds));
-  fill(uniqueSortedIds(base.watchedIds));
+
+  if (source.kind !== 'rewatch') {
+    fill(uniqueSortedIds(base.ratedIds));
+    fill(uniqueSortedIds(base.watchedIds));
+  }
+
   fill(uniqueSortedIds(cooldownIds));
 
   const excludeIds = [...excluded].sort((left, right) => left - right);
@@ -94,13 +168,15 @@ function buildRequest(
 
   return {
     request: {
-      source: 'catalog',
+      source: requestSource(source),
       limit: 4,
+      ...(candidateIds === null ? {} : { candidateIds }),
       ...(trimmedPrompt === '' ? {} : { prompt: trimmedPrompt }),
       ...(tasteVector === null ? {} : { tasteVector: [...tasteVector] }),
       ...(excludeIds.length === 0 ? {} : { excludeIds }),
     },
     droppedIds: [...droppedIds].sort((left, right) => left - right),
+    poolDroppedIds,
   };
 }
 
