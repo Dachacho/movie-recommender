@@ -57,7 +57,7 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 - Bug fixes: add a regression test that reproduces the bug when practical, then verify the fix.
 - Do not add low-value tests merely to satisfy a rule. Prefer meaningful coverage and correctness over test quantity.
 - Unit-test pure math and selection logic against small committed fixtures; no network in unit tests. Use integration tests for API routes and DB access.
-- Run relevant existing tests and checks before reporting completion. Never claim a skipped test passed. The commands and evidence rules are in the review workflow below; report each exact command and actual result.
+- Completion claims require fresh evidence from the relevant checks. Run them before reporting completion, report each exact command and its actual result, and list skipped tests separately rather than counting them as passed. The detailed evidence rules are in the review workflow below.
 
 ### Review
 
@@ -66,13 +66,14 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 
 ### Skills
 
-Installed skills live in `.agents/skills/`. OpenCode advertises each description; load the skill when its description matches the task. PRODUCT.md, ARCHITECTURE.md, this file and the §2 approval gates override any skill; a skill never justifies a new dependency, schema change or scope expansion.
+The skill registry includes built-in skills such as `opencode` and `report` as well as the project-local skills in `.agents/skills/`. OpenCode advertises each description; load a skill when its description matches the task and the conditions below. PRODUCT.md, ARCHITECTURE.md, this file and the §2 approval gates override any skill; a skill never justifies a new dependency, schema change or scope expansion.
 
 - **test-driven-development** — load for complex or high-risk logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Write the failing test first; cover edge cases, failure paths and relevant invariants. Ordinary features and UI behaviour need appropriate tests but not test-first; trivial changes need none. Bug fixes get a regression test when practical.
 - **systematic-debugging** — load for every bug, failing test or unexpected result before proposing a fix. Find the root cause first. After three failed fixes, stop and raise the architectural question instead of trying a fourth.
 - **verification-before-completion** — load before any claim that work is done or passing, and before the final report. Run the exact command, read the full output and state only what it proves. Reviewers check the supplied raw output instead, because their permissions deny shell.
 - **receiving-code-review** — load when acting on reviewer findings: verify each finding against the code, push back with reasoning if it is wrong, and fix one item at a time.
 - **frontend-design** — load when building or reshaping the recommendation screen, dashboard or other user-facing UI. Produce a short design plan (palette, type, layout, principles) before writing code, then stay within the approved plain-CSS stack and accessibility requirements.
+- **writing-for-agents** — load when creating, editing or auditing AGENTS.md, agent definitions, skill definitions or other instructions agents read. Keep instructions minimal and point to detail rather than duplicating it.
 - **find-skills** — load when a task is large, unfamiliar or likely to recur, or before building custom tooling. Search `npx skills find` or skills.sh, prefer maintained sources, and report the best candidate and why it fits. Do not search for small, routine work. If nothing relevant exists, proceed with the approved stack and say so. Installing requires approval and is always project-local: run `npx skills add <package> -y` after approval, never with `-g`.
 
 ## 4. Definition of done
