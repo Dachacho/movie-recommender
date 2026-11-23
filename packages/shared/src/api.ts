@@ -143,7 +143,8 @@ export const letterboxdMatchedSchema = z.object({
   movieId: z.number().int().positive(),
   title: z.string(),
   releaseYear: z.number().int().nullable(),
-  // Null means the import row marked the film watched but carried no rating.
+  // Null means the row carried no rating: either a watches export (watched)
+  // or a watchlist export (added to the watchlist) — the client routes by file mode.
   rating: z
     .number()
     .min(0.5)

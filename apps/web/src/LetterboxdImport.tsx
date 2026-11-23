@@ -1,13 +1,20 @@
 import { useState, type ChangeEvent } from 'react';
-import type { LetterboxdImportResponse } from '@movie-recommender/shared';
+import type { LetterboxdImportResponse, LetterboxdUnmatched } from '@movie-recommender/shared';
 import { RecommendationApiError, RecommendationNetworkError, importLetterboxd } from './api';
+import { detectLetterboxdFileType } from './letterboxdFileType';
 import type { GuestProfile } from './profile/GuestProfile';
+
+interface FileImportResult {
+  report: LetterboxdImportResponse;
+  ratings: number;
+  watchings: number;
+  watchlisted: number;
+}
 
 type ImportState =
   | { status: 'idle' }
   | { status: 'pending' }
-  | { status: 'done'; report: LetterboxdImportResponse; ratings: number; watchings: number }
-  | { status: 'error'; message: string };
+  | { status: 'done'; results: FileImportResult[]; failures: string[] };
 
 const READ_ERROR_MESSAGE =
   'Could not read that file. Choose it again or re-export it from Letterboxd.';
@@ -23,12 +30,44 @@ function importErrorMessage(error: unknown): string {
   return IMPORT_ERROR_MESSAGE;
 }
 
-function importSummary(ratings: number, watchings: number, rows: number): string {
-  const ratingWord = ratings === 1 ? 'rating' : 'ratings';
-  const watchingWord = watchings === 1 ? 'watching' : 'watchings';
-  const rowWord = rows === 1 ? 'row' : 'rows';
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
 
-  return `Imported ${ratings} ${ratingWord} and ${watchings} ${watchingWord} from ${rows} ${rowWord}.`;
+/**
+ * One sentence over every file that imported successfully. Ratings and
+ * watches are reported as an import; watchlist films are reported separately
+ * because they are not watched and must not read like it. Files that failed
+ * are reported by their own message instead of being folded into these counts.
+ */
+function importSummary(results: readonly FileImportResult[]): string {
+  const totals = results.reduce(
+    (sum, result) => ({
+      ratings: sum.ratings + result.ratings,
+      watchings: sum.watchings + result.watchings,
+      watchlisted: sum.watchlisted + result.watchlisted,
+    }),
+    { ratings: 0, watchings: 0, watchlisted: 0 },
+  );
+  const clauses: string[] = [];
+
+  if (totals.ratings > 0 || totals.watchings > 0) {
+    const ratingWord = plural(totals.ratings, 'rating', 'ratings');
+    const watchingWord = plural(totals.watchings, 'watching', 'watchings');
+
+    clauses.push(
+      `Imported ${totals.ratings} ${ratingWord} and ${totals.watchings} ${watchingWord}`,
+    );
+  }
+
+  if (totals.watchlisted > 0) {
+    const filmWord = plural(totals.watchlisted, 'film', 'films');
+    const lead = clauses.length === 0 ? 'Added' : 'added';
+
+    clauses.push(`${lead} ${totals.watchlisted} ${filmWord} to your watchlist`);
+  }
+
+  return `${clauses.join('; ')}.`;
 }
 
 function unmatchedKey(name: string, year: number | null): string {
@@ -39,68 +78,90 @@ export interface LetterboxdImportProps {
   profile: GuestProfile;
   onRatingImported: (movieId: number, rating: number) => void;
   onWatchedImported: (movieId: number) => void;
+  onWatchlistImported: (movieId: number) => void;
 }
 
 export function LetterboxdImport({
   profile,
   onRatingImported,
   onWatchedImported,
+  onWatchlistImported,
 }: LetterboxdImportProps) {
   const [state, setState] = useState<ImportState>({ status: 'idle' });
   const pending = state.status === 'pending';
+  const unmatched = state.status === 'done' ? unmatchedRows(state.results) : [];
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const input = event.target;
-    const file = input.files?.[0] ?? null;
+    const files = Array.from(input.files ?? []);
 
-    // Allow re-selecting the same file after a failed or completed import.
+    // Allow re-selecting the same files after a failed or completed import.
     input.value = '';
 
-    if (pending || file === null) {
+    if (pending || files.length === 0) {
       return;
     }
 
     setState({ status: 'pending' });
 
-    let csv: string;
+    const results: FileImportResult[] = [];
+    const failures: string[] = [];
 
-    try {
-      csv = await file.text();
-    } catch {
-      setState({ status: 'error', message: READ_ERROR_MESSAGE });
-      return;
-    }
+    for (const file of files) {
+      let csv: string;
 
-    let report: LetterboxdImportResponse;
-
-    try {
-      report = await importLetterboxd(csv);
-    } catch (error) {
-      setState({ status: 'error', message: importErrorMessage(error) });
-      return;
-    }
-
-    let ratings = 0;
-    let watchings = 0;
-
-    try {
-      for (const match of report.matched) {
-        if (match.rating === null) {
-          await profile.setWatched(match.movieId);
-          watchings += 1;
-          onWatchedImported(match.movieId);
-        } else {
-          await profile.setRating(match.movieId, match.rating);
-          ratings += 1;
-          onRatingImported(match.movieId, match.rating);
-        }
+      try {
+        csv = await file.text();
+      } catch {
+        failures.push(READ_ERROR_MESSAGE);
+        continue;
       }
-    } catch {
-      setState({ status: 'error', message: WRITE_ERROR_MESSAGE });
-      return;
+
+      // The filename is not a reliable signal between exports, so the header
+      // decides how the matched rows are applied to the guest profile.
+      const mode = detectLetterboxdFileType(csv);
+      let report: LetterboxdImportResponse;
+
+      try {
+        report = await importLetterboxd(csv);
+      } catch (error) {
+        failures.push(importErrorMessage(error));
+        continue;
+      }
+
+      let ratings = 0;
+      let watchings = 0;
+      let watchlisted = 0;
+
+      try {
+        for (const match of report.matched) {
+          if (mode === 'watchlist') {
+            // A watchlist film is only a wish, never watched or rated.
+            await profile.addToWatchlist(match.movieId);
+            watchlisted += 1;
+            onWatchlistImported(match.movieId);
+          } else if (mode === 'ratings' && match.rating !== null) {
+            await profile.setRating(match.movieId, match.rating);
+            ratings += 1;
+            onRatingImported(match.movieId, match.rating);
+          } else {
+            // Watches exports carry no rating; a ratings export can still
+            // contain a rated-null row, which means "seen, not rated".
+            await profile.setWatched(match.movieId);
+            watchings += 1;
+            onWatchedImported(match.movieId);
+          }
+        }
+      } catch {
+        // Earlier successful writes stay; only this file is reported failed.
+        failures.push(WRITE_ERROR_MESSAGE);
+        continue;
+      }
+
+      results.push({ report, ratings, watchings, watchlisted });
     }
 
-    setState({ status: 'done', report, ratings, watchings });
+    setState({ status: 'done', results, failures });
   }
 
   return (
@@ -110,6 +171,7 @@ export function LetterboxdImport({
         <input
           type="file"
           accept=".csv,text/csv"
+          multiple
           disabled={pending}
           onChange={(event) => {
             void handleFileChange(event);
@@ -119,31 +181,32 @@ export function LetterboxdImport({
 
       {pending && <p className="status import__status">Matching your films against the catalog…</p>}
 
-      {state.status === 'error' && (
-        <p className="status status--error import__status">{state.message}</p>
-      )}
-
       {state.status === 'done' && (
         <div className="import__report">
-          <p className="status import__status">
-            {state.report.matched.length === 0
-              ? EMPTY_REPORT_MESSAGE
-              : importSummary(state.ratings, state.watchings, state.report.stats.rows)}
-          </p>
-          {state.report.unmatched.length > 0 && (
+          {state.results.length > 0 && (
+            <p className="status import__status">
+              {state.results.every((result) => result.report.matched.length === 0)
+                ? EMPTY_REPORT_MESSAGE
+                : importSummary(state.results)}
+            </p>
+          )}
+
+          {state.failures.map((message, index) => (
+            <p className="status status--error import__status" key={`${index}:${message}`}>
+              {message}
+            </p>
+          ))}
+
+          {unmatched.length > 0 && (
             <details className="import__unmatched">
               <summary>
                 Not in the catalog:{' '}
-                {state.report.unmatched.length === 1
-                  ? '1 film'
-                  : `${state.report.unmatched.length} films`}
+                {unmatched.length === 1 ? '1 film' : `${unmatched.length} films`}
               </summary>
               <ul className="import__list">
-                {state.report.unmatched.map((unmatched) => (
-                  <li key={unmatchedKey(unmatched.name, unmatched.year)}>
-                    {unmatched.year === null
-                      ? unmatched.name
-                      : `${unmatched.name} (${unmatched.year})`}
+                {unmatched.map((row) => (
+                  <li key={unmatchedKey(row.name, row.year)}>
+                    {row.year === null ? row.name : `${row.name} (${row.year})`}
                   </li>
                 ))}
               </ul>
@@ -153,4 +216,17 @@ export function LetterboxdImport({
       )}
     </div>
   );
+}
+
+/** Deduplicates unmatched films when several files contain the same miss. */
+function unmatchedRows(results: readonly FileImportResult[]): LetterboxdUnmatched[] {
+  const rows = new Map<string, LetterboxdUnmatched>();
+
+  for (const result of results) {
+    for (const unmatched of result.report.unmatched) {
+      rows.set(unmatchedKey(unmatched.name, unmatched.year), unmatched);
+    }
+  }
+
+  return [...rows.values()];
 }

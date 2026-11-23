@@ -81,6 +81,17 @@ describe('parseLetterboxdCsv', () => {
     ]);
   });
 
+  it('parses a watchlist export with a Position column and no Rating', () => {
+    const csv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,https://boxd.it/def\n';
+
+    const parsed = parseLetterboxdCsv(csv);
+
+    expect(parsed.invalid).toBe(0);
+    expect(parsed.rows).toEqual([
+      { name: 'Heat', normalizedTitle: 'heat', year: 1995, rating: null },
+    ]);
+  });
+
   it('treats a blank year or rating as null', () => {
     const csv = `${RATINGS_HEADER}2026-01-01,Up,,,\n`;
 

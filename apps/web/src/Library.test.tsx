@@ -89,7 +89,7 @@ describe('Letterboxd import', () => {
     renderLibrary(profile);
     selectFile(fileWithText(CSV_TEXT));
 
-    expect(await screen.findByText('Imported 2 ratings and 1 watching from 5 rows.')).toBeTruthy();
+    expect(await screen.findByText('Imported 2 ratings and 1 watching.')).toBeTruthy();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/imports/letterboxd');
@@ -147,7 +147,7 @@ describe('Letterboxd import', () => {
 
     selectFile(fileWithText(CSV_TEXT));
 
-    expect(await screen.findByText('Imported 1 rating and 0 watchings from 1 row.')).toBeTruthy();
+    expect(await screen.findByText('Imported 1 rating and 0 watchings.')).toBeTruthy();
     await waitFor(() => {
       const updatedGroup = screen.getByRole('radiogroup', { name: 'Rating for Heat' });
       const threeAndAHalfStars = within(updatedGroup).getByRole('radio', {
@@ -302,6 +302,187 @@ describe('Letterboxd import', () => {
       (await profile.getRatings()).map(({ movieId, rating }) => ({ movieId, rating })),
     ).toEqual([{ movieId: 11, rating: 4 }]);
     await expect(profile.getWatchedIds()).resolves.toEqual([]);
+  });
+
+  it('adds a watchlist export to the guest watchlist instead of marking films watched', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const setWatched = vi.spyOn(profile, 'setWatched');
+    const setRating = vi.spyOn(profile, 'setRating');
+    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,\n2,Moonlight,2016,';
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [
+          { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
+          { movieId: 13, title: 'Moonlight', releaseYear: 2016, rating: null },
+        ],
+        unmatched: [],
+        stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+      }),
+    );
+
+    renderLibrary(profile);
+    selectFile(fileWithText(watchlistCsv));
+
+    expect(await screen.findByText('Added 2 films to your watchlist.')).toBeTruthy();
+    expect(submittedBody(fetchMock)).toEqual({ csv: watchlistCsv });
+    await expect(profile.getWatchlistIds()).resolves.toEqual([12, 13]);
+    await expect(profile.getWatchedIds()).resolves.toEqual([]);
+    await expect(profile.getRatings()).resolves.toEqual([]);
+    expect(setWatched).not.toHaveBeenCalled();
+    expect(setRating).not.toHaveBeenCalled();
+  });
+
+  it('treats a watches export as watched even if a row carries a rating', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const watchesCsv = 'Date,Name,Year,Letterboxd URI\n2024-01-01,Heat,1995,';
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [{ movieId: 12, title: 'Heat', releaseYear: 1995, rating: 4 }],
+        unmatched: [],
+        stats: { rows: 1, matched: 1, unmatched: 0, invalid: 0 },
+      }),
+    );
+
+    renderLibrary(profile);
+    selectFile(fileWithText(watchesCsv));
+
+    expect(await screen.findByText('Imported 0 ratings and 1 watching.')).toBeTruthy();
+    await expect(profile.getWatchedIds()).resolves.toEqual([12]);
+    await expect(profile.getRatings()).resolves.toEqual([]);
+    await expect(profile.getWatchlistIds()).resolves.toEqual([]);
+  });
+
+  it('maps a ratings file and a watchlist file selected together separately', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const setWatched = vi.spyOn(profile, 'setWatched');
+    const ratingsCsv =
+      'Date,Name,Year,Letterboxd URI,Rating\n' +
+      '2024-01-01,Arrival,2016,,4.5\n' +
+      '2024-01-02,Heat,1995,,3';
+    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,\n2,Moonlight,2016,';
+
+    fetchMock.mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { csv: string };
+
+      if (body.csv === ratingsCsv) {
+        return jsonResponse({
+          matched: [
+            { movieId: 11, title: 'Arrival', releaseYear: 2016, rating: 4.5 },
+            { movieId: 12, title: 'Heat', releaseYear: 1995, rating: 3 },
+          ],
+          unmatched: [],
+          stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+        });
+      }
+
+      return jsonResponse({
+        matched: [
+          { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
+          { movieId: 13, title: 'Moonlight', releaseYear: 2016, rating: null },
+        ],
+        unmatched: [],
+        stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+      });
+    });
+
+    renderLibrary(profile);
+    fireEvent.change(importInput(), {
+      target: { files: [fileWithText(ratingsCsv), fileWithText(watchlistCsv)] },
+    });
+
+    expect(
+      await screen.findByText(
+        'Imported 2 ratings and 0 watchings; added 2 films to your watchlist.',
+      ),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      (await profile.getRatings()).map(({ movieId, rating }) => ({ movieId, rating })),
+    ).toEqual([
+      { movieId: 11, rating: 4.5 },
+      { movieId: 12, rating: 3 },
+    ]);
+    await expect(profile.getWatchlistIds()).resolves.toEqual([12, 13]);
+    await expect(profile.getWatchedIds()).resolves.toEqual([]);
+    expect(setWatched).not.toHaveBeenCalled();
+    expect(importInput().disabled).toBe(false);
+  });
+
+  it('keeps an earlier successful file when a later file fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const watchlistCsv = 'Position,Name,Year,Letterboxd URI\n1,Heat,1995,';
+    const brokenCsv = 'not a letterboxd export';
+
+    fetchMock.mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { csv: string };
+
+      if (body.csv === watchlistCsv) {
+        return jsonResponse({
+          matched: [{ movieId: 12, title: 'Heat', releaseYear: 1995, rating: null }],
+          unmatched: [],
+          stats: { rows: 1, matched: 1, unmatched: 0, invalid: 0 },
+        });
+      }
+
+      return jsonResponse(
+        { error: { code: 'invalid_csv', message: 'CSV must include a Name column.' } },
+        400,
+      );
+    });
+
+    renderLibrary(profile);
+    fireEvent.change(importInput(), {
+      target: { files: [fileWithText(watchlistCsv), fileWithText(brokenCsv)] },
+    });
+
+    expect(await screen.findByText('Added 1 film to your watchlist.')).toBeTruthy();
+    expect(await screen.findByText('CSV must include a Name column.')).toBeTruthy();
+    await expect(profile.getWatchlistIds()).resolves.toEqual([12]);
+    expect(importInput().disabled).toBe(false);
+  });
+
+  it('reflects an imported watchlist film in search results', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockImplementation(async (input) => {
+      if (typeof input === 'string' && input.startsWith('/api/movies/search')) {
+        return jsonResponse({ movies: [HEAT] });
+      }
+
+      return jsonResponse({
+        matched: [{ movieId: 3, title: 'Heat', releaseYear: 1995, rating: null }],
+        unmatched: [],
+        stats: { rows: 1, matched: 1, unmatched: 0, invalid: 0 },
+      });
+    });
+
+    renderLibrary(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const watchlistToggle = await screen.findByRole('button', { name: 'Heat: watchlist' });
+    expect(watchlistToggle.getAttribute('aria-pressed')).toBe('false');
+
+    selectFile(fileWithText('Position,Name,Year,Letterboxd URI\n1,Heat,1995,'));
+
+    expect(await screen.findByText('Added 1 film to your watchlist.')).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Heat: watchlist' }).getAttribute('aria-pressed'),
+      ).toBe('true');
+    });
+    expect(screen.getByRole('button', { name: 'Heat: watched' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
   });
 
   it('does not start a second import while one is pending', async () => {

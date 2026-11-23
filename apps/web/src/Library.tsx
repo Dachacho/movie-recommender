@@ -228,6 +228,9 @@ export function Library({ profile }: { profile: GuestProfile }) {
         onWatchedImported={(movieId) => {
           setWatchedIds((previous) => toggledIds(previous, movieId, true));
         }}
+        onWatchlistImported={(movieId) => {
+          setWatchlistIds((previous) => toggledIds(previous, movieId, true));
+        }}
       />
 
       <form className="library__search" onSubmit={handleSearch}>
