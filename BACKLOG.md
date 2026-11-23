@@ -1,7 +1,8 @@
 # Backlog
 
 ## To do
-- [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings.
+- [ ] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings. (MVP: match against the existing catalog, report unmatched films — no external API.)
+- [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
 - [ ] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration. (Include a rewatch source: candidates are the guest's films rated 4.0+ — comfort rewatch mode ranks the guest's own shortlist by tonight's mood; research-backed, rides the existing list-source machinery.)
 - [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration. certification_us rejected for display; the snapshot has no adult flag to curate on. Retune the interim quality-tilt weights from the reranker: 0.12 tilt, 0.7/0.3 rating-dominant vote blend, log scale 6 — user reports unfamiliar films still surfacing; decide the right dial value with evidence, and discuss whether a minimum-vote threshold is acceptable given the architecture's no-eligibility-gate rule.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
