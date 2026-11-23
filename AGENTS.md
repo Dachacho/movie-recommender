@@ -85,7 +85,7 @@ The skill registry includes built-in skills such as `opencode` and `report` as w
 - No unapproved dependency, schema, API, architecture or embedding change.
 - No unrelated diff, no secrets, no guest data in logs.
 - Backlog status and any approved documentation update are done.
-- The first commit unit is staged with a proposed message; later units stay unstaged; nothing is committed or pushed.
+- Each commit unit is committed after its checks pass and any required review is clean; nothing is pushed without explicit approval.
 - Final report delivered in the format below.
 
 ## 5. Final report format
@@ -98,15 +98,15 @@ Use these headings, kept brief:
 - **Decisions** — choices made and why; flag any that need confirmation.
 - **Open issues** — unresolved problems, risks or follow-ups.
 - **Manual verification** — steps the user should run.
-- **Staged** — exact files staged and the proposed commit message. State that nothing was committed.
+- **Commits** — hash, message and files for each unit committed; state that nothing was pushed.
 
 ## 6. Git workflow
 
 - **Branching:** commit directly to `main`. No feature branches, no pull requests, no merge commits. For a genuinely risky change (e.g. a destructive migration), use a throwaway local branch and delete it afterwards; never leave stale branches.
-- **Your role:** stage, never commit. The user reviews and commits. If the user explicitly asks you to commit in that session, follow the rules below, then report the hash.
-- **Staging:** `git add` explicit paths only; never `git add -A`, `git add .` or `git commit -a`. Stage only files belonging to the change. Never stage unrelated user work, generated files, `.env` files or secrets. Shell permissions ask before `git commit` and `git push`, and deny blanket adds; do not attempt to bypass them.
+- **Your role:** commit each unit yourself once its checks pass and any required review is clean; the user can review local commits afterwards. Report each hash. Never push without explicit approval.
+- **Staging:** `git add` explicit paths only; never `git add -A`, `git add .` or `git commit -a`. Stage only files belonging to the change. Never stage unrelated user work, generated files, `.env` files or secrets. Shell permissions deny blanket adds and ask before `git push`; `git commit` is allowed for the orchestrator, while implementer subagents remain denied. Do not attempt to bypass these rules.
 - **Unit:** the smallest coherent, independently revertable step. Never commit a whole backlog item at once; split it into a short series (for example workspace config → shared types → module with its tests → wiring). Each commit must leave the repo typechecking and passing relevant tests, even if the feature is not yet reachable. If a commit spans unrelated areas or would not revert cleanly, split it. Keep refactors and formatting separate. No WIP commits on `main`.
-- **Staging order:** when work spans several commits, stage only the first unit and leave later units unstaged until the previous commit exists. Report the planned commit series so nothing is lost.
+- **Staging order:** when work spans several commits, commit them in order as each unit passes checks and any required review. Stage explicit paths for the current unit only and never batch units into one commit. Report the planned commit series so nothing is lost.
 - **Message format:**
   ```
   feat: add pure taste-vector calculation
@@ -133,7 +133,7 @@ Commands:
 Routing:
 | Class | Criteria | Flow |
 | --- | --- | --- |
-| SIMPLE | At most 20 changed lines and no logic or behaviour change: renames, copy, formatting, comments, docs. | Orchestrator plans inline without waiting for approval, implements, self-checks, runs the §4 checks and stages the first unit. No independent review. |
+| SIMPLE | At most 20 changed lines and no logic or behaviour change: renames, copy, formatting, comments, docs. | Orchestrator plans inline without waiting for approval, implements, self-checks, runs the §4 checks and commits the unit. No independent review. |
 | STANDARD | Any non-trivial change that is not HIGH-RISK. | Orchestrator plans and waits for approval; delegates each step to `implementer`; runs `reviewer` after each step; fixes BLOCKERs and re-reviews. |
 | HIGH-RISK | Ranking/taste-vector math, diversity, filters, cooldown logic, vector search, data-transforming migrations, security-sensitive logic, or uncertainty between STANDARD and HIGH-RISK. | Same as STANDARD, but `reviewer-strict` replaces `reviewer`. |
 
@@ -151,7 +151,7 @@ Rules:
 - Fix every BLOCKER and re-review. A fix round is one attempt to resolve all open BLOCKERs. Stop and ask the user after 3 failed fix rounds or 2 review rounds with open BLOCKERs, whichever comes first.
 - Act on reviewer findings using `receiving-code-review`: verify each finding against the code, push back with reasoning if it is wrong, and fix one item at a time.
 - Use the configured reviewer agents for step reviews. Do not dispatch a general-purpose reviewer.
-- Stage only after review passes. No commits or pushes unless the user explicitly asks in that session.
+- Commit only after the required review passes. Never push without explicit approval.
 - Keep sessions short. Compact or start a fresh subagent before the context gets to about 250K tokens.
 
 A step is not done until §4 is met and the raw check output is shown.

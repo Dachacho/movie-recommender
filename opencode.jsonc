@@ -2,8 +2,8 @@
   "$schema": "https://opencode.ai/config.json",
   "permissions": [
     { "action": "subagent", "resource": "*", "effect": "deny" },
-    { "action": "shell", "resource": "git commit", "effect": "ask" },
-    { "action": "shell", "resource": "git commit *", "effect": "ask" },
+    { "action": "shell", "resource": "git commit", "effect": "allow" },
+    { "action": "shell", "resource": "git commit *", "effect": "allow" },
     { "action": "shell", "resource": "git commit -a", "effect": "deny" },
     { "action": "shell", "resource": "git commit -a *", "effect": "deny" },
     { "action": "shell", "resource": "git commit -am *", "effect": "deny" },
