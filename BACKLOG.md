@@ -1,14 +1,15 @@
 # Backlog
 
 ## To do
+- [ ] Soft mood boosts (suggestive phrases like "edge of my seat" nudging genres without hard filters): deferred until there is an evaluation path for prompt behavior — the ratings-based harness cannot evidence prompt tuning, and guessing is what the evaluation ticket retired.
 - [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
-- [ ] Evaluate ranking against held-out ratings and baselines; tune if needed. (Bundled: adopt the snapshot's imdb_rating/imdb_votes as an evaluation signal in the same schema migration — DONE. Evaluation harness + experiment round shipped; recorded result: no taste config beats popularity, tilt sweep monotone to 0.50. APPROVED AND PINNED: raise QUALITY_TILT_WEIGHT 0.12 → 0.50 — apply with widened invariant fixtures (taste-gap > 0.50) and recomputed score anchors; see docs/evaluation-experiments-2026-11-23.md. certification_us rejected for display; the snapshot has no adult flag to curate on.)
 - [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
 
 ## Doing
 
 ## Done
+- [x] Evaluate ranking against held-out ratings and baselines; tune if needed. (Harness shipped, deterministic, production-path parity; baseline showed production trailing popularity AND genre; experiments isolated pool size, pool-stage tilt and the tilt sweep; approved outcome applied: QUALITY_TILT_WEIGHT 0.50, parity-verified Recall@4 0.0028 → 0.0068. IMDb evaluation columns adopted, API-unexposed. Narrative: docs/evaluation-explained-2026-11-24.md. Soft mood boosts deferred to their own ticket.)
 - [x] Implement list mode with permitted input methods, individual replacement, full refresh, cooldown and exploration. (Four sources: catalog, watchlist, rewatch shortlist rated 4.0+, pasted lists; per-pick replacement with seven-day cooldowns, atomic batch writes, action-time exclusions, and trim notices; exploration 0-1 scales taste similarity, Surprise me sends interim 0.5.)
 - [x] Import Letterboxd CSV with matching report; resolve missing movies through TMDB and compatible embeddings. (MVP shipped: match-only against the catalog with a matched/unmatched report, ratings.csv and watches.csv, rated rows imply seen. TMDB resolution for unmatched films split into the catalog-growth ticket.)
 - [x] Add IndexedDB guest profile, ratings, watched state and watchlist. (Dexie-backed, Zod-validated; ratings power the stateless /taste flow, watched ids excluded from picks; library UI with half-star ratings and toggles.)
