@@ -192,6 +192,253 @@ describe('deepRerank', () => {
   });
 });
 
+describe('deepRerank scoring modes', () => {
+  it('orders a three-candidate pool by the z-score blend', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], 0, null),
+      candidate(2, 0.8, [0, 1], 10, null),
+      candidate(3, 0.7, [1, 1], 5, null),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'zscore', weight: 0.7 },
+      }),
+    ).toEqual([2, 3, 1]);
+  });
+
+  it('falls back to the z-scored similarity order when the z-score weight is zero', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], 0, null),
+      candidate(2, 0.8, [0, 1], 10, null),
+      candidate(3, 0.7, [1, 1], 5, null),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'zscore', weight: 0 },
+      }),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it('treats a zero-variance similarity dimension as zero', () => {
+    const pool = [
+      candidate(1, 0.8, [1, 0], 0, null),
+      candidate(2, 0.8, [0, 1], 10, null),
+      candidate(3, 0.8, [1, 1], 5, null),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'zscore', weight: 0.7 },
+      }),
+    ).toEqual([2, 3, 1]);
+  });
+
+  it('treats a zero-variance quality dimension as zero', () => {
+    const pool = [
+      candidate(1, 0.7, [1, 0], 5, null),
+      candidate(2, 0.9, [0, 1], 5, null),
+      candidate(3, 0.8, [1, 1], 5, null),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'zscore', weight: 0.7 },
+      }),
+    ).toEqual([2, 3, 1]);
+  });
+
+  it('computes reciprocal-rank fusion scores from similarity and popularity ranks', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], null, 10),
+      candidate(2, 0.8, [0, 1], null, 5_000),
+      candidate(3, 0.7, [1, 1], null, 2_000),
+      candidate(4, 0.6, [1, -1], null, 1_000),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 4,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0.5 },
+      }),
+    ).toEqual([2, 1, 3, 4]);
+  });
+
+  it('reduces fusion to similarity order when the fusion weight is zero', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], 0, 0),
+      candidate(2, 0.8, [0, 1], 10, 10_000_000),
+      candidate(3, 0.7, [1, 1], 0, 0),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: QUALITY_TILT_WEIGHT,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0 },
+      }),
+    ).toEqual([1, 2, 3]);
+
+    expect(deepRerank(pool, { limit: 3, tiltWeight: QUALITY_TILT_WEIGHT, penalty: 0 })).toEqual([
+      2, 1, 3,
+    ]);
+  });
+
+  it('changes the fusion order when k changes', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], null, 10),
+      candidate(2, 0.8, [0, 1], null, 5_000),
+      candidate(3, 0.7, [1, 1], null, 2_000),
+      candidate(4, 0.6, [1, -1], null, 1_000),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 4,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0.5, k: 1 },
+      }),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
+  it('defaults fusion k to 60', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], null, 10),
+      candidate(2, 0.8, [0, 1], null, 5_000),
+      candidate(3, 0.7, [1, 1], null, 2_000),
+      candidate(4, 0.6, [1, -1], null, 1_000),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 4,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0.5 },
+      }),
+    ).toEqual(
+      deepRerank(pool, {
+        limit: 4,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0.5, k: 60 },
+      }),
+    );
+  });
+
+  it('ranks fusion popularity with missing vote counts last', () => {
+    const pool = [
+      candidate(1, 0.9, [1, 0], null, 100),
+      candidate(2, 0.7, [0, 1], null, null),
+      candidate(3, 0.8, [1, 1], null, 0),
+      candidate(4, 0.6, [1, -1], null, 10),
+    ];
+
+    // Null-as-zero would rank film 2 third and return [1, 3, 2, 4], the similarity order.
+    expect(
+      deepRerank(pool, {
+        limit: 4,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 0.5 },
+      }),
+    ).toEqual([1, 3, 4, 2]);
+  });
+
+  it('breaks fusion rank ties by movie id', () => {
+    const pool = [
+      candidate(2, 0.9, [1, 0], null, 100),
+      candidate(1, 0.9, [0, 1], null, 100),
+      candidate(3, 0.8, [1, 1], null, 200),
+    ];
+
+    expect(
+      deepRerank(pool, {
+        limit: 3,
+        tiltWeight: 0,
+        penalty: 0,
+        scoring: { mode: 'fusion', weight: 1 },
+      }),
+    ).toEqual([1, 3, 2]);
+  });
+
+  it('rejects invalid z-score and fusion weights and k', () => {
+    const pool = [candidate(1, 1, [1, 0])];
+
+    expect(() =>
+      deepRerank(pool, {
+        limit: 1,
+        tiltWeight: 0,
+        scoring: { mode: 'zscore', weight: Number.NaN },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, { limit: 1, tiltWeight: 0, scoring: { mode: 'zscore', weight: -0.1 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, { limit: 1, tiltWeight: 0, scoring: { mode: 'zscore', weight: 1.1 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, {
+        limit: 1,
+        tiltWeight: 0,
+        scoring: { mode: 'fusion', weight: Number.NaN },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, { limit: 1, tiltWeight: 0, scoring: { mode: 'fusion', weight: -0.1 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, { limit: 1, tiltWeight: 0, scoring: { mode: 'fusion', weight: 0.5, k: 0 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, {
+        limit: 1,
+        tiltWeight: 0,
+        scoring: { mode: 'fusion', weight: 0.5, k: 1.5 },
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      deepRerank(pool, {
+        limit: 1,
+        tiltWeight: 0,
+        scoring: { mode: 'fusion', weight: 0.5, k: Number.NaN },
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('carries the scoring mode through rankCandidates', () => {
+    const buffer = [candidate(1, 0.9, [1, 0], 0, null), candidate(2, 0.8, [0, 1], 10, null)];
+
+    expect(
+      rankCandidates(buffer, {
+        poolSize: 2,
+        poolTiltWeight: 0,
+        tiltWeight: 0,
+        depth: 2,
+        scoring: { mode: 'zscore', weight: 0.7 },
+      }),
+    ).toEqual([2, 1]);
+  });
+});
+
 describe('tiltPool', () => {
   it('orders by similarity plus the weighted quality score', () => {
     const pool = [candidate(1, 0.9, [1, 0], 0, 0), candidate(2, 0.8, [0, 1], 10, 1_000_000)];

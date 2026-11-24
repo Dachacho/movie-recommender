@@ -33,6 +33,7 @@ import {
   rankCandidates,
   topLikedGenres,
   type RankingSettings,
+  type RerankScoring,
 } from './rank.js';
 import { MIN_USER_RATINGS, TEST_FRACTION, splitRatings, type SplitStats } from './split.js';
 import { buildTasteVector } from './taste.js';
@@ -52,8 +53,19 @@ interface Table {
 const QUALITY_TILT = QUALITY_TILT_WEIGHT;
 const RANKING_DEPTH = 100;
 
-function settings(poolSize: number, poolTiltWeight: number, tiltWeight: number): RankingSettings {
-  return { poolSize, poolTiltWeight, tiltWeight, depth: RANKING_DEPTH };
+function settings(
+  poolSize: number,
+  poolTiltWeight: number,
+  tiltWeight: number,
+  scoring?: RerankScoring,
+): RankingSettings {
+  return {
+    poolSize,
+    poolTiltWeight,
+    tiltWeight,
+    depth: RANKING_DEPTH,
+    ...(scoring === undefined ? {} : { scoring }),
+  };
 }
 
 const CONFIGS: readonly ExperimentConfig[] = [
@@ -126,6 +138,66 @@ const CONFIGS: readonly ExperimentConfig[] = [
     key: 'pool-50-t050',
     label: 'Pool 50 — tilt 0.50',
     settings: settings(CANDIDATE_POOL_SIZE, 0, 0.5),
+  },
+  {
+    key: 'rerank-zscore-p50-w03',
+    label: 'Pool 50 — z-score blend, weight 0.3',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'zscore', weight: 0.3 }),
+  },
+  {
+    key: 'rerank-zscore-p50-w05',
+    label: 'Pool 50 — z-score blend, weight 0.5',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'zscore', weight: 0.5 }),
+  },
+  {
+    key: 'rerank-zscore-p50-w07',
+    label: 'Pool 50 — z-score blend, weight 0.7',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'zscore', weight: 0.7 }),
+  },
+  {
+    key: 'rerank-zscore-p100-w03',
+    label: 'Pool 100 — z-score blend, weight 0.3',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'zscore', weight: 0.3 }),
+  },
+  {
+    key: 'rerank-zscore-p100-w05',
+    label: 'Pool 100 — z-score blend, weight 0.5',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'zscore', weight: 0.5 }),
+  },
+  {
+    key: 'rerank-zscore-p100-w07',
+    label: 'Pool 100 — z-score blend, weight 0.7',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'zscore', weight: 0.7 }),
+  },
+  {
+    key: 'rerank-fusion-p50-w025',
+    label: 'Pool 50 — rank fusion, weight 0.25',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'fusion', weight: 0.25 }),
+  },
+  {
+    key: 'rerank-fusion-p50-w05',
+    label: 'Pool 50 — rank fusion, weight 0.5',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'fusion', weight: 0.5 }),
+  },
+  {
+    key: 'rerank-fusion-p50-w1',
+    label: 'Pool 50 — rank fusion, weight 1',
+    settings: settings(CANDIDATE_POOL_SIZE, 0, 0, { mode: 'fusion', weight: 1 }),
+  },
+  {
+    key: 'rerank-fusion-p100-w025',
+    label: 'Pool 100 — rank fusion, weight 0.25',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'fusion', weight: 0.25 }),
+  },
+  {
+    key: 'rerank-fusion-p100-w05',
+    label: 'Pool 100 — rank fusion, weight 0.5',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'fusion', weight: 0.5 }),
+  },
+  {
+    key: 'rerank-fusion-p100-w1',
+    label: 'Pool 100 — rank fusion, weight 1',
+    settings: settings(EVALUATION_CANDIDATES, 0, 0, { mode: 'fusion', weight: 1 }),
   },
 ];
 
@@ -443,6 +515,12 @@ function renderReport(input: {
     '- Deterministic: fixed split, deterministic SQL ordering and id tie-breaks, no randomness.',
   );
   lines.push('');
+  lines.push('## Method');
+  lines.push('');
+  lines.push(
+    'Rerank scoring: every config keeps the same greedy diversity pass, diversity penalty and tie-breaks; only the base score changes. `tilt` uses `similarity + tiltWeight * quality`. `zscore` standardises similarity and quality across the pool with the population standard deviation (a zero-variance dimension scores 0) and uses `(1 - weight) * z(similarity) + weight * z(quality)`. `fusion` uses 1-based ranks within the pool (similarity descending; popularity by vote count descending, missing counts last; ties by movie id) and scores `1 / (k + rankSimilarity) + weight / (k + rankPopularity)`, with `k` defaulting to 60.',
+  );
+  lines.push('');
 
   for (const table of tables) {
     lines.push(...renderTable(table));
@@ -670,6 +748,27 @@ async function main(): Promise<void> {
           row(`Pool 100 — tilt ${String(QUALITY_TILT)}`, get('pool-100')),
           row('Pool 100 — tilt 0.25', get('pool-100-t025')),
           row('Pool 100 — tilt 0.50', get('pool-100-t050')),
+          row('Popularity baseline', popularityMetrics, 'reference'),
+          row('Genre baseline', genreMetrics, 'reference'),
+        ],
+      },
+      {
+        title: '5. Rerank scoring: z-score blend and rank fusion',
+        blurb:
+          'Pool stage stays pure cosine order (tilt 0), then the greedy diversity rerank uses an alternative base score. Z-score standardises similarity and quality across the pool; rank fusion combines reciprocal similarity and popularity ranks with k = 60. Pool 50 rankings are capped at 50 items; pool 100 scans to depth 100.',
+        rows: [
+          row(labelFor('rerank-zscore-p50-w03'), get('rerank-zscore-p50-w03'), 'MRR depth 50'),
+          row(labelFor('rerank-zscore-p50-w05'), get('rerank-zscore-p50-w05'), 'MRR depth 50'),
+          row(labelFor('rerank-zscore-p50-w07'), get('rerank-zscore-p50-w07'), 'MRR depth 50'),
+          row(labelFor('rerank-fusion-p50-w025'), get('rerank-fusion-p50-w025'), 'MRR depth 50'),
+          row(labelFor('rerank-fusion-p50-w05'), get('rerank-fusion-p50-w05'), 'MRR depth 50'),
+          row(labelFor('rerank-fusion-p50-w1'), get('rerank-fusion-p50-w1'), 'MRR depth 50'),
+          row(labelFor('rerank-zscore-p100-w03'), get('rerank-zscore-p100-w03'), 'MRR depth 100'),
+          row(labelFor('rerank-zscore-p100-w05'), get('rerank-zscore-p100-w05'), 'MRR depth 100'),
+          row(labelFor('rerank-zscore-p100-w07'), get('rerank-zscore-p100-w07'), 'MRR depth 100'),
+          row(labelFor('rerank-fusion-p100-w025'), get('rerank-fusion-p100-w025'), 'MRR depth 100'),
+          row(labelFor('rerank-fusion-p100-w05'), get('rerank-fusion-p100-w05'), 'MRR depth 100'),
+          row(labelFor('rerank-fusion-p100-w1'), get('rerank-fusion-p100-w1'), 'MRR depth 100'),
           row('Popularity baseline', popularityMetrics, 'reference'),
           row('Genre baseline', genreMetrics, 'reference'),
         ],

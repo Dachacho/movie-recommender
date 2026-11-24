@@ -48,6 +48,12 @@ function validatePenalty(penalty: number): void {
   }
 }
 
+function validateBlendWeight(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RangeError(`${name} must be a finite number between 0 and 1, received ${value}.`);
+  }
+}
+
 function validateLimit(limit: number): void {
   validatePositiveInteger(limit, 'limit');
 }
@@ -221,6 +227,7 @@ interface PreparedCandidate {
   movieId: number;
   similarity: number;
   quality: number;
+  voteCount: number | null;
   scaled: Float64Array;
   normSquared: number;
 }
@@ -262,6 +269,7 @@ function prepareCandidates(candidates: readonly ScoredCandidate[]): PreparedCand
       movieId: candidate.movieId,
       similarity: candidate.similarity,
       quality: qualityScore(candidate.voteAverage, candidate.voteCount),
+      voteCount: candidate.voteCount,
       scaled,
       normSquared,
     };
@@ -282,18 +290,166 @@ function preparedCosine(left: PreparedCandidate, right: PreparedCandidate): numb
   return dotProduct / (Math.sqrt(left.normSquared) * Math.sqrt(right.normSquared));
 }
 
+export type RerankScoring =
+  | { mode: 'tilt' }
+  | { mode: 'zscore'; weight: number }
+  | { mode: 'fusion'; weight: number; k?: number };
+
+const FUSION_DEFAULT_K = 60;
+
+function validateScoring(scoring: RerankScoring): void {
+  if (scoring.mode === 'tilt') {
+    return;
+  }
+
+  validateBlendWeight(scoring.weight, 'scoring weight');
+
+  if (scoring.mode === 'fusion') {
+    validatePositiveInteger(scoring.k ?? FUSION_DEFAULT_K, 'k');
+  }
+}
+
+function standardise(values: readonly number[]): number[] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  let sum = 0;
+
+  for (const value of values) {
+    sum += value;
+  }
+
+  const mean = sum / values.length;
+  let squaredDeviations = 0;
+
+  for (const value of values) {
+    const deviation = value - mean;
+
+    squaredDeviations += deviation * deviation;
+  }
+
+  const standardDeviation = Math.sqrt(squaredDeviations / values.length);
+
+  if (standardDeviation === 0) {
+    return values.map(() => 0);
+  }
+
+  return values.map((value) => (value - mean) / standardDeviation);
+}
+
+function zscoreBaseScores(prepared: readonly PreparedCandidate[], weight: number): number[] {
+  const similarities = standardise(prepared.map((candidate) => candidate.similarity));
+  const qualities = standardise(prepared.map((candidate) => candidate.quality));
+
+  return prepared.map(
+    (_, index) => (1 - weight) * (similarities[index] ?? 0) + weight * (qualities[index] ?? 0),
+  );
+}
+
+function compareSimilarity(left: PreparedCandidate, right: PreparedCandidate): number {
+  if (left.similarity !== right.similarity) {
+    return right.similarity - left.similarity;
+  }
+
+  return left.movieId - right.movieId;
+}
+
+function comparePopularity(left: PreparedCandidate, right: PreparedCandidate): number {
+  if (left.voteCount === null && right.voteCount === null) {
+    return left.movieId - right.movieId;
+  }
+
+  if (left.voteCount === null) {
+    return 1;
+  }
+
+  if (right.voteCount === null) {
+    return -1;
+  }
+
+  if (left.voteCount !== right.voteCount) {
+    return right.voteCount - left.voteCount;
+  }
+
+  return left.movieId - right.movieId;
+}
+
+function ranksBy(
+  prepared: readonly PreparedCandidate[],
+  compare: (left: PreparedCandidate, right: PreparedCandidate) => number,
+): number[] {
+  const order = prepared.map((_, index) => index);
+
+  order.sort((leftIndex, rightIndex) => {
+    const left = prepared[leftIndex];
+    const right = prepared[rightIndex];
+
+    if (left === undefined || right === undefined) {
+      return leftIndex - rightIndex;
+    }
+
+    const difference = compare(left, right);
+
+    return difference !== 0 ? difference : leftIndex - rightIndex;
+  });
+
+  const ranks = new Array<number>(prepared.length).fill(0);
+
+  order.forEach((index, position) => {
+    ranks[index] = position + 1;
+  });
+
+  return ranks;
+}
+
+function fusionBaseScores(
+  prepared: readonly PreparedCandidate[],
+  weight: number,
+  k: number,
+): number[] {
+  const similarityRanks = ranksBy(prepared, compareSimilarity);
+  const popularityRanks = ranksBy(prepared, comparePopularity);
+
+  return prepared.map((_, index) => {
+    const rankSimilarity = similarityRanks[index] ?? 1;
+    const rankPopularity = popularityRanks[index] ?? 1;
+
+    return 1 / (k + rankSimilarity) + weight / (k + rankPopularity);
+  });
+}
+
 export interface DeepRerankOptions {
   limit: number;
   tiltWeight: number;
   penalty?: number;
+  scoring?: RerankScoring;
+}
+
+function baseScoresFor(
+  prepared: readonly PreparedCandidate[],
+  options: DeepRerankOptions,
+): number[] {
+  const scoring = options.scoring ?? { mode: 'tilt' };
+
+  switch (scoring.mode) {
+    case 'tilt':
+      return prepared.map(
+        (candidate) => candidate.similarity + options.tiltWeight * candidate.quality,
+      );
+    case 'zscore':
+      return zscoreBaseScores(prepared, scoring.weight);
+    case 'fusion':
+      return fusionBaseScores(prepared, scoring.weight, scoring.k ?? FUSION_DEFAULT_K);
+  }
 }
 
 /**
- * The production greedy diversity rerank with a configurable limit and tilt
- * weight. `selectDiverse` caps the limit at `MAX_RECOMMENDATIONS` and fixes the
+ * The production greedy diversity rerank with a configurable limit and base
+ * score. `selectDiverse` caps the limit at `MAX_RECOMMENDATIONS` and fixes the
  * tilt, so the evaluation needs its own copy to rank to depth 100 and to sweep
- * the tilt. Score arithmetic and tie-breaking mirror `selectDiverse` exactly;
- * `rank.test.ts` asserts the first four picks match it.
+ * the scoring. The greedy loop, diversity penalty and tie-breaking mirror
+ * `selectDiverse` exactly; `rank.test.ts` asserts the first four picks match it.
  */
 export function deepRerank(
   candidates: readonly ScoredCandidate[],
@@ -306,10 +462,12 @@ export function deepRerank(
 
   validatePenalty(penalty);
 
+  if (options.scoring !== undefined) {
+    validateScoring(options.scoring);
+  }
+
   const prepared = prepareCandidates(candidates);
-  const baseScores = prepared.map(
-    (candidate) => candidate.similarity + options.tiltWeight * candidate.quality,
-  );
+  const baseScores = baseScoresFor(prepared, options);
   const selected = new Array<boolean>(prepared.length).fill(false);
   const maxSelectedSimilarity = new Array<number>(prepared.length).fill(Number.NEGATIVE_INFINITY);
   const ranked: number[] = [];
@@ -407,6 +565,8 @@ export interface RankingSettings {
   tiltWeight: number;
   /** Maximum length of the returned ranking (MRR scans all of it). */
   depth: number;
+  /** Base-score formula for the greedy rerank; defaults to the production tilt. */
+  scoring?: RerankScoring;
 }
 
 /**
@@ -435,5 +595,6 @@ export function rankCandidates(
   return deepRerank(pool, {
     limit: Math.min(settings.depth, pool.length),
     tiltWeight: settings.tiltWeight,
+    ...(settings.scoring === undefined ? {} : { scoring: settings.scoring }),
   });
 }
