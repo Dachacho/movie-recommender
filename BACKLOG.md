@@ -1,13 +1,13 @@
 # Backlog
 
 ## To do
-- [ ] Add dashboard, history, profile export/delete and PWA installation.
 - [ ] Optional accounts, authentication and guest migration.
 - [ ] For discussion: clustered taste — replace the single average taste vector with 2–3 clusters of the guest's rated films (e.g. the horror + animation case), ranking within the cluster tonight's prompt/mood points at. ARCHITECTURE already flags the single-centroid dilution; the evaluation harness can compare per-cluster vs single centroid on held-out likes. Decide after a short experiment round.
 - [ ] Soft mood boosts (suggestive phrases like "edge of my seat" nudging genres without hard filters): deferred until there is an evaluation path for prompt behavior — the ratings-based harness cannot evidence prompt tuning, and guessing is what the evaluation ticket retired.
 - [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
 
 ## Doing
+- [ ] Add dashboard, history, profile export/delete and PWA installation.
 
 ## Done
 - [x] Evaluate ranking against held-out ratings and baselines; tune if needed. (Harness shipped, deterministic, production-path parity; baseline showed production trailing popularity AND genre; experiments isolated pool size, pool-stage tilt and the tilt sweep; approved outcome applied: QUALITY_TILT_WEIGHT 0.50, parity-verified Recall@4 0.0028 → 0.0068. IMDb evaluation columns adopted, API-unexposed. Narrative: docs/evaluation-explained-2026-11-24.md. Soft mood boosts deferred to their own ticket.)

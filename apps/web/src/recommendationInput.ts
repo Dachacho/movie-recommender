@@ -25,7 +25,9 @@ export const EXPLORATION_STRENGTH = 0.5;
  * sources that ride the API's `list` source: rewatch candidates are the
  * guest's rated films, paste candidates are the imported list's matches.
  */
-export type RecommendationSourceKind = 'catalog' | 'watchlist' | 'rewatch' | 'paste';
+export const RECOMMENDATION_SOURCE_KINDS = ['catalog', 'watchlist', 'rewatch', 'paste'] as const;
+
+export type RecommendationSourceKind = (typeof RECOMMENDATION_SOURCE_KINDS)[number];
 
 export type SourceSelection =
   | { kind: 'catalog' }

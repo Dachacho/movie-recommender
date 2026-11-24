@@ -1,4 +1,10 @@
-import type { CooldownRecord, RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
+import type {
+  CooldownRecord,
+  HistoryEntryInput,
+  RatingRecord,
+  WatchedRecord,
+  WatchlistRecord,
+} from './schema';
 import type { GuestProfileStorage } from './storage';
 
 function hasMovieId(row: unknown, movieId: number): boolean {
@@ -20,6 +26,16 @@ function rowMovieId(row: unknown): number | null {
   return typeof movieId === 'number' ? movieId : null;
 }
 
+function rowId(row: unknown): number | null {
+  if (typeof row !== 'object' || row === null || !('id' in row)) {
+    return null;
+  }
+
+  const id = (row as { id?: unknown }).id;
+
+  return typeof id === 'number' ? id : null;
+}
+
 /**
  * In-memory GuestProfileStorage used by tests. It deliberately stores raw
  * `unknown` rows so tests can seed malformed IndexedDB-like data.
@@ -29,6 +45,8 @@ export class MemoryGuestProfileStorage implements GuestProfileStorage {
   private watched: unknown[] = [];
   private watchlist: unknown[] = [];
   private cooldowns: unknown[] = [];
+  private history: unknown[] = [];
+  private nextHistoryId = 1;
 
   seedRatings(rows: unknown[]): void {
     this.ratings = [...rows];
@@ -44,6 +62,12 @@ export class MemoryGuestProfileStorage implements GuestProfileStorage {
 
   seedCooldowns(rows: unknown[]): void {
     this.cooldowns = [...rows];
+  }
+
+  seedHistory(rows: unknown[]): void {
+    this.history = [...rows];
+    const ids = rows.map(rowId).filter((id): id is number => id !== null);
+    this.nextHistoryId = ids.length === 0 ? 1 : Math.max(...ids) + 1;
   }
 
   async readRatings(): Promise<unknown[]> {
@@ -108,5 +132,25 @@ export class MemoryGuestProfileStorage implements GuestProfileStorage {
 
   async deleteCooldown(movieId: number): Promise<void> {
     this.cooldowns = this.cooldowns.filter((row) => !hasMovieId(row, movieId));
+  }
+
+  async readHistory(): Promise<unknown[]> {
+    return [...this.history];
+  }
+
+  async writeHistoryEntry(entry: HistoryEntryInput): Promise<number> {
+    const id = this.nextHistoryId;
+    this.nextHistoryId += 1;
+    this.history = [...this.history, { ...entry, id }];
+
+    return id;
+  }
+
+  async deleteHistoryEntry(id: number): Promise<void> {
+    this.history = this.history.filter((row) => rowId(row) !== id);
+  }
+
+  async clearHistory(): Promise<void> {
+    this.history = [];
   }
 }

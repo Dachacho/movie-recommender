@@ -1,5 +1,12 @@
 import Dexie, { type Table } from 'dexie';
-import type { CooldownRecord, RatingRecord, WatchedRecord, WatchlistRecord } from './schema';
+import type {
+  CooldownRecord,
+  HistoryEntry,
+  HistoryEntryInput,
+  RatingRecord,
+  WatchedRecord,
+  WatchlistRecord,
+} from './schema';
 
 const DEFAULT_GUEST_PROFILE_DB_NAME = 'movie-recommender-guest-profile';
 
@@ -12,6 +19,8 @@ export class GuestProfileDB extends Dexie {
   watched!: Table<WatchedRecord, number>;
   watchlist!: Table<WatchlistRecord, number>;
   cooldowns!: Table<CooldownRecord, number>;
+  /** `id` is assigned by the store, so inserts omit it. */
+  history!: Table<HistoryEntry, number, HistoryEntryInput>;
 
   constructor(name: string = DEFAULT_GUEST_PROFILE_DB_NAME) {
     super(name);
@@ -27,6 +36,15 @@ export class GuestProfileDB extends Dexie {
       watched: 'movieId, watchedAt',
       watchlist: 'movieId, addedAt',
       cooldowns: 'movieId, expiresAt',
+    });
+    // Version 3 adds recommendation history. The auto-increment id orders
+    // rounds by insertion; createdAt is indexed for future range queries.
+    this.version(3).stores({
+      ratings: 'movieId, updatedAt',
+      watched: 'movieId, watchedAt',
+      watchlist: 'movieId, addedAt',
+      cooldowns: 'movieId, expiresAt',
+      history: '++id, createdAt',
     });
   }
 }

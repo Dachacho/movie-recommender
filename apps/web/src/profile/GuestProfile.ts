@@ -1,15 +1,19 @@
-import { tasteRatingSchema, type TasteRequest } from '@movie-recommender/shared';
+import { tasteRatingSchema, type MovieCard, type TasteRequest } from '@movie-recommender/shared';
 import type { ZodType } from 'zod';
 import { COOLDOWN_MS } from '../recommendationInput';
 import { GuestProfileDB } from './db';
 import {
+  MAX_HISTORY_ROUNDS,
   MAX_TASTE_RATINGS,
   cooldownRecordSchema,
+  historyEntryInputSchema,
+  historyEntrySchema,
   profileMovieIdSchema,
   ratingRecordSchema,
   watchedRecordSchema,
   watchlistRecordSchema,
   type CooldownRecord,
+  type HistoryEntry,
   type RatingRecord,
   type WatchedRecord,
   type WatchlistRecord,
@@ -28,6 +32,14 @@ export interface GuestProfileOptions {
 }
 
 export type RatingsPayload = TasteRequest['ratings'];
+
+export interface RecordRoundInput {
+  kind: HistoryEntry['kind'];
+  source: HistoryEntry['source'];
+  prompt: string;
+  replacedMovieId: number | null;
+  movies: readonly MovieCard[];
+}
 
 function parseValidRecords<T>(rows: unknown[], schema: ZodType<T>): T[] {
   const records: T[] = [];
@@ -63,8 +75,9 @@ function uniqueSortedIds(ids: readonly number[]): number[] {
  * Facade over guest-only IndexedDB data. Storage is injected so tests use an
  * in-memory implementation and the app uses Dexie.
  *
- * Every successful write bumps `version`; callers use it to invalidate cached
- * derived data such as the taste vector.
+ * Every taste-relevant write bumps `version`; callers use it to invalidate
+ * cached derived data such as the taste vector. Recommendation history is not
+ * taste input, so history writes deliberately leave `version` untouched.
  */
 export class GuestProfile {
   private readonly storage: GuestProfileStorage;
@@ -211,6 +224,63 @@ export class GuestProfile {
 
   async hasCooldowns(): Promise<boolean> {
     return (await this.cooldownsCount()) > 0;
+  }
+
+  /**
+   * Records one completed round for the dashboard. The whole entry is
+   * validated before anything reaches storage. History is not taste input, so
+   * this does not bump `version`: only taste-relevant writes may invalidate
+   * the taste cache.
+   */
+  async recordRound(input: RecordRoundInput): Promise<HistoryEntry> {
+    const parsed = historyEntryInputSchema.safeParse({
+      createdAt: this.now(),
+      kind: input.kind,
+      source: input.source,
+      prompt: input.prompt,
+      replacedMovieId: input.replacedMovieId,
+      movies: input.movies.map((movie) => ({
+        id: movie.id,
+        title: movie.title,
+        releaseYear: movie.releaseYear,
+        posterPath: movie.posterPath,
+      })),
+    });
+
+    if (!parsed.success) {
+      throw new GuestProfileValidationError(
+        parsed.error.issues[0]?.message ?? 'Invalid history entry.',
+      );
+    }
+
+    const id = await this.storage.writeHistoryEntry(parsed.data);
+    await this.trimHistory();
+
+    return { id, ...parsed.data };
+  }
+
+  /** Newest first by insertion id, dropping rows that no longer validate. */
+  async getHistory(limit = 50): Promise<HistoryEntry[]> {
+    const records = parseValidRecords(await this.storage.readHistory(), historyEntrySchema);
+
+    return records.sort((left, right) => right.id - left.id).slice(0, limit);
+  }
+
+  async clearHistory(): Promise<void> {
+    await this.storage.clearHistory();
+  }
+
+  /** Deletes all but the newest MAX_HISTORY_ROUNDS valid entries. */
+  private async trimHistory(): Promise<void> {
+    const records = parseValidRecords(await this.storage.readHistory(), historyEntrySchema);
+    const staleIds = records
+      .sort((left, right) => right.id - left.id)
+      .slice(MAX_HISTORY_ROUNDS)
+      .map((record) => record.id);
+
+    for (const id of staleIds) {
+      await this.storage.deleteHistoryEntry(id);
+    }
   }
 
   /**
