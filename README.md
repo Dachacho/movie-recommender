@@ -4,10 +4,12 @@ One good pick, three varied alternatives, no endless scrolling.
 
 A local-first movie recommender built on a 40,000-film catalog. It combines your
 ratings into a taste vector, searches the catalog by embedding similarity,
-reranks the alternatives for variety, and keeps guest data in the browser.
+applies a measured reception tilt, reranks the alternatives for variety, and
+keeps the guest profile — ratings, watchlist, watched films and history — in the
+browser.
 
-The backend, catalog and recommendation screen are working — see
-[Status](#status).
+The backend, catalog, recommendation screen, library and dashboard are working —
+see [Status](#status).
 
 ## Stack
 
@@ -86,6 +88,8 @@ Run these from the repository root.
 | `npm run db:up` / `db:down` | Start / stop PostgreSQL |
 | `npm run db:migrate` | Apply Drizzle migrations |
 | `SNAPSHOT_CSV=… npm run catalog:import-snapshot` | Import or refresh the catalog (fixed 40,000 rows) |
+| `npm run evaluate:ranking` | Held-out ranking evaluation (needs MovieLens CSVs, see below) |
+| `npm run evaluate:experiments` | Ranking experiment sweep on the same split |
 
 Database tests skip unless `DATABASE_URL` is set. To run the whole suite against
 the real database:
@@ -101,6 +105,25 @@ Run a single workspace or file:
 npm test -w @movie-recommender/api
 cd apps/api && npx vitest run src/modules/recommendations
 ```
+
+### Ranking evaluation
+
+The harness needs MovieLens `ratings_small.csv` and `links.csv` from Kaggle's
+[`rounakbanik/the-movies-dataset`](https://www.kaggle.com/datasets/rounakbanik/the-movies-dataset)
+(the committed reports use that ~100k-rating sample) and a populated catalog:
+
+```sh
+MOVIELENS_RATINGS_CSV=/path/ratings_small.csv \
+MOVIELENS_LINKS_CSV=/path/links.csv \
+npm run evaluate:ranking -w @movie-recommender/api -- --output ../../docs/evaluation-rundate.md
+```
+
+`evaluate:experiments` takes the same inputs and sweeps pool sizes, tilt weights
+and rerank scoring modes. Both are offline and deterministic and never change
+served code or weights. Always pass `--output`: the default path overwrites the
+2026-11-23 report. Committed runs: `docs/evaluation-2026-11-23.md`,
+`docs/evaluation-experiments-2026-11-23.md`,
+`docs/evaluation-experiments-2026-11-24-round2.md`.
 
 ## API
 
@@ -118,6 +141,7 @@ Base URL: `http://localhost:3000`. JSON only. Every error uses the same envelope
 | `GET` | `/movies/search?q=alien` | Case-insensitive title search (2–80 chars, 20 results) |
 | `GET` | `/movies/:id` | One movie card |
 | `POST` | `/taste` | Ratings → normalized taste vector, or `null` |
+| `POST` | `/imports/letterboxd` | Match a Letterboxd ratings/watches/watchlist CSV to catalog ids |
 | `POST` | `/recommendations` | Up to four ranked movies plus a cold-start flag |
 
 `GET /movies/search` responds with `{ "movies": [ …cards… ] }`.
@@ -186,7 +210,30 @@ curl -s -X POST http://localhost:3000/recommendations \
 - `limit`: required, 1–4.
 - Bodies over 256 kB return `413 payload_too_large`; bursts beyond 30 requests
   per minute per IP return `429 rate_limited`.
-- Popularity and vote counts are never eligibility gates.
+- Popularity and vote counts are never eligibility gates. They do steer ranking:
+  the retrieval pool (top 500 by cosine, trimmed to 50) and the diversity rerank
+  both add `0.50 ×` a log-scaled reception score.
+
+## Guest profile
+
+Everything the guest owns lives in IndexedDB in the browser: half-star ratings,
+watched films, watchlist, seven-day replacement cooldowns and recommendation
+history. There is no account and no server-side profile.
+
+- **Library** — search the catalog, rate half-stars, toggle watched and watchlist,
+  and import a Letterboxd CSV (matched/unmatched report; unmatched films are not
+  invented).
+- **Dashboard** (`#dashboard`) — counts, mean rating, a ten-bucket rating
+  histogram, rated and watchlisted films with remove actions, and the newest ten
+  rounds as a history ledger.
+- **Your data** — export ratings as a Letterboxd-compatible CSV (the URI column
+  stays empty; we never store Letterboxd URIs), export a versioned JSON backup,
+  or delete every local row at once.
+
+The API only ever receives transient per-request inputs — the taste ratings,
+recommendation id arrays/vectors, and catalogue lookups by movie id — and none
+are logged or persisted. Ratings reach `POST /taste`; history, imports and
+exports stay entirely local.
 
 ## Project layout
 
@@ -197,12 +244,19 @@ apps/api/src/
   db/                    Drizzle schema, client, migration tests
   modules/movies/        Snapshot import, parsing, search/detail routes
   modules/taste/         Pure taste-vector math + /taste route
-  modules/recommendations/ Candidate query, constraints, diversity rerank, route
-apps/web/src/            React recommendation screen
+  modules/recommendations/ Candidate query, constraints, pool tilt, diversity rerank, route
+  modules/imports/       Letterboxd CSV matching
+  evaluation/            Offline held-out ranking harness
+apps/web/src/
+  App.tsx                Recommendation screen, hash navigation
+  Library.tsx            Search, ratings, watched and watchlist toggles
+  Dashboard.tsx          Stats, history, export and delete
+  profile/               Dexie-backed guest profile (validate-on-read)
 packages/shared/         Zod request/response contracts
 db/init/                 pgvector extension for Compose
 docs/seed-inspection.md  2017 seed inspection (historical record)
 docs/catalog-snapshot-2026.md  Current catalog provenance and curation
+docs/evaluation-*.md     Held-out evaluation reports
 ```
 
 ## Data and license
@@ -232,24 +286,31 @@ deferred until productionization.
 ## Status
 
 Working: catalog import and verification, movie search/detail, taste vectors,
-pgvector ranking with filters and prompt constraints, diversity reranking, cold
-start, the HTTP API with validation and integration tests, and the
-recommendation screen (main pick, alternatives, optional prompt, poster
-fallbacks).
+pgvector ranking with filters and prompt constraints, the measured pool-stage
+quality tilt, diversity reranking, cold start, the HTTP API with validation and
+integration tests, the recommendation screen, the IndexedDB guest library,
+Letterboxd CSV import, list mode with cooldowns and replacement, the dashboard
+with history and profile export/delete, and an offline evaluation harness with
+committed held-out results.
 
-Next, per [`BACKLOG.md`](BACKLOG.md): IndexedDB guest profiles and ratings,
-Letterboxd import, list mode with cooldowns and replacement, evaluation against
-held-out ratings, and a dashboard/PWA.
+Next, per [`BACKLOG.md`](BACKLOG.md): installable PWA (deferred by decision), an
+optional taste-profile graph, optional accounts with guest migration, and
+evidence-led ranking work (clustered taste first).
 
 Known gaps:
 
 - No auth or server-side persistence; guest data is designed to live in
-  IndexedDB.
-- Letterboxd links are not shown yet.
+  IndexedDB, so clearing browser storage clears the profile. Export protects
+  against eviction.
+- Installable PWA, Letterboxd links on cards, and the taste-profile graph are not
+  built yet.
 - Prompt constraints cover genres, decades and runtime; mood phrases rank by
-  embedding only until the evaluation ticket tunes soft boosts.
+  embedding only until there is an evaluation path for prompt behaviour.
 - Imports truncate before embedding; a failed run recovers by re-running.
-- Full-catalog import and incremental re-embedding are not implemented.
+- Full-catalog import, incremental re-embedding and TMDB resolution for unmatched
+  imports are not implemented.
+- The served ranker still trails the popularity baseline on held-out Recall@4
+  (0.0078 vs 0.0082) while matching or beating it on NDCG@4 and MRR.
 
 ## More docs
 
@@ -257,3 +318,7 @@ Known gaps:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — approved technical decisions
 - [`BACKLOG.md`](BACKLOG.md) — implementation order and status
 - [`AGENTS.md`](AGENTS.md) — workflow for coding agents
+- [`docs/evaluation-explained-2026-11-24.md`](docs/evaluation-explained-2026-11-24.md) — why the tilt exists, in plain language
+- [`docs/evaluation-experiments-2026-11-24-round2.md`](docs/evaluation-experiments-2026-11-24-round2.md) — round 2: pool-stage tilt won, fusion and z-scoring lost
+- [`docs/letterboxd-integration.md`](docs/letterboxd-integration.md) — CSV import behaviour and limits
+- [`docs/catalog-snapshot-2026.md`](docs/catalog-snapshot-2026.md) — catalog provenance and curation

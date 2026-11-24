@@ -34,3 +34,17 @@ Letterboxd API or by URL, instead of requiring a manual export?
 - The official API remains the thing to re-check at productionization; if
   Letterboxd ever opens access to recommendation apps, user-data ingestion and
   list-by-URL both become possible through it.
+
+## Implementation status (Nov 2026)
+
+- `POST /imports/letterboxd` matches `ratings.csv`, `watches.csv` and
+  `watchlist.csv` rows against the catalog by title and year, returns a
+  matched/unmatched report, and never invents a film. A rated row implies
+  watched.
+- Unmatched films stay unmatched: resolving them through the live TMDB API is a
+  separate, blocked backlog ticket (API key, catalog-drift and TMDB caching
+  terms).
+- The profile export writes Letterboxd's ratings column layout
+  (`Date,Name,Year,Letterboxd URI,Rating`), but the URI column is intentionally
+  empty: the app never stores Letterboxd URIs, and fabricating them is not an
+  option.

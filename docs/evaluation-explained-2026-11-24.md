@@ -111,9 +111,8 @@ So the honest framing was never "beat popularity". It was: **beat the genre
 baseline decisively, approach popularity's retrieval, and stay a taste-driven
 ranker.** Tilt 0.50 does exactly that: ~80% of popularity's recall, clearly
 ahead of genre, with the pool still selected by taste. The product owner
-approved 0.50, and it was pinned in the backlog (application requires
-recomputing the test fixtures that pin the old arithmetic, which is being done
-as its own careful step).
+approved 0.50, it was applied as its own reviewed step, and round 2 later raised
+its leverage (see [Update](#update--round-2-2026-11-24)).
 
 ## What each shipped change actually meant
 
@@ -137,6 +136,25 @@ as its own careful step).
   but it collides with the architecture's "never an eligibility gate" rule and
   the product's obscure-films goal. It is a conscious non-decision.
 - **Pool 50 stays** the served pool size: deeper pools bought almost nothing.
+  Retrieval now fetches 500 only so the tilt can choose those 50.
+
+## Update — round 2 (2026-11-24)
+
+Round 2 revisited lever 2 above with a different framing: keep the rerank tilt and
+**also** order the top-500 cosine buffer by it before slicing the 50-film pool.
+That combination shipped:
+
+| Config | Recall@4 | NDCG@4 | MRR |
+|---|---|---|---|
+| Pool 50, tilt at rerank only (previous) | 0.0064 | 0.0156 | 0.0385 |
+| Pool 50, tilt at pool + rerank (shipped) | 0.0078 | 0.0195 | 0.0570 |
+| Popularity baseline | 0.0082 | 0.0195 | 0.0579 |
+
+The earlier "tiny gains" result was for *moving* the tilt to the pool stage
+*instead of* the rerank (0.0019 recall), not for combining them. Two other
+scoring forms were tested and lost badly: z-score blends peaked at 0.0037 recall
+and reciprocal-rank fusion at 0.0028. Full tables, caveats and the parity run:
+[`evaluation-experiments-2026-11-24-round2.md`](evaluation-experiments-2026-11-24-round2.md).
 
 ## Caveats to keep in mind when quoting these numbers
 
