@@ -10,7 +10,12 @@ import {
 } from './api';
 import { Library } from './Library';
 import { convertListPaste } from './listPaste';
-import { createGuestProfile, type GuestProfile, type RatingsPayload } from './profile/GuestProfile';
+import {
+  createGuestProfile,
+  type GuestProfile,
+  type RatingsPayload,
+  type RecordRoundInput,
+} from './profile/GuestProfile';
 import {
   EXPLORATION_STRENGTH,
   buildRecommendationInput,
@@ -189,6 +194,22 @@ function actionErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+/**
+ * History is secondary to the round itself: a write failure must not turn
+ * shown picks into an error, and guest data is never logged.
+ */
+async function rememberRound(profile: GuestProfile, input: RecordRoundInput): Promise<void> {
+  if (input.movies.length === 0) {
+    return;
+  }
+
+  try {
+    await profile.recordRound(input);
+  } catch {
+    // Best effort only; the picks are already on screen.
+  }
 }
 
 function PosterPlaceholder({ title }: { title: string }) {
@@ -467,6 +488,13 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           },
         },
       });
+      await rememberRound(profile, {
+        kind: 'round',
+        source: sourceKind,
+        prompt: trimmedPrompt,
+        replacedMovieId: null,
+        movies: response.movies,
+      });
     } catch (error) {
       setState({ status: 'error', message: errorMessage(error) });
     }
@@ -546,6 +574,13 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           : previous,
       );
       setAction({ status: 'idle' });
+      await rememberRound(profile, {
+        kind: 'replace',
+        source: round.intent.source,
+        prompt: round.intent.prompt,
+        replacedMovieId: movie.id,
+        movies: mergeReplacement(round.movies, index, response.movies),
+      });
     } catch (error) {
       setAction({ status: 'error', message: actionErrorMessage(error, REPLACE_ERROR_MESSAGE) });
     }
@@ -604,6 +639,13 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         round: { ...round, movies: response.movies },
       });
       setAction({ status: 'idle' });
+      await rememberRound(profile, {
+        kind: 'refresh',
+        source: round.intent.source,
+        prompt: round.intent.prompt,
+        replacedMovieId: null,
+        movies: response.movies,
+      });
     } catch (error) {
       setAction({ status: 'error', message: actionErrorMessage(error, REFRESH_ERROR_MESSAGE) });
     }

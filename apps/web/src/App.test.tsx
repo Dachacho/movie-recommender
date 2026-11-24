@@ -5,6 +5,7 @@ import { App } from './App';
 import { LIST_PASTE_TOO_LONG_MESSAGE } from './listPaste';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
+import type { HistoryEntry } from './profile/schema';
 import { MAX_CANDIDATE_IDS, MAX_EXCLUDE_IDS } from './recommendationInput';
 
 const TRIM_NOTICE =
@@ -214,6 +215,25 @@ async function submitPrompt(prompt: string): Promise<void> {
 
 function selectSource(label: string): void {
   fireEvent.click(screen.getByRole('radio', { name: label }));
+}
+
+function movieSnapshot(movie: MovieCard): HistoryEntry['movies'][number] {
+  return {
+    id: movie.id,
+    title: movie.title,
+    releaseYear: movie.releaseYear,
+    posterPath: movie.posterPath,
+  };
+}
+
+async function waitForHistory(profile: GuestProfile, count: number): Promise<HistoryEntry[]> {
+  return waitFor(async () => {
+    const history = await profile.getHistory();
+
+    expect(history).toHaveLength(count);
+
+    return history;
+  });
 }
 
 describe('App', () => {
@@ -1586,5 +1606,138 @@ describe('App', () => {
       prompt: 'something strange',
       exploration: 0.5,
     });
+  });
+
+  it('records a completed round with its source, trimmed prompt and shown picks', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.addToWatchlist(HEAT.id);
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }));
+
+    renderApp(profile);
+    selectSource('My watchlist');
+    await submitPrompt('  comfort films  ');
+    await screen.findByRole('heading', { name: 'Arrival' });
+
+    const [entry] = await waitForHistory(profile, 1);
+
+    expect(entry).toMatchObject({
+      kind: 'round',
+      source: 'watchlist',
+      prompt: 'comfort films',
+      replacedMovieId: null,
+    });
+    expect(entry?.movies).toEqual([ARRIVAL, MOONLIGHT].map(movieSnapshot));
+  });
+
+  it('records a replacement with the rejected pick and the merged picks', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+    await screen.findByRole('heading', { name: 'Sicario' });
+
+    const history = await waitForHistory(profile, 2);
+
+    expect(history.map((entry) => entry.kind)).toEqual(['replace', 'round']);
+    expect(history[0]).toMatchObject({
+      kind: 'replace',
+      source: 'catalog',
+      prompt: '',
+      replacedMovieId: MOONLIGHT.id,
+    });
+    expect(history[0]?.movies).toEqual([ARRIVAL, SICARIO, HEAT].map(movieSnapshot));
+  });
+
+  it('records a refresh with the new picks', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO, THE_LIGHTHOUSE], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('cozy');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+    await screen.findByRole('heading', { name: 'Sicario' });
+
+    const [entry] = await waitForHistory(profile, 2);
+
+    expect(entry).toMatchObject({
+      kind: 'refresh',
+      source: 'catalog',
+      prompt: 'cozy',
+      replacedMovieId: null,
+    });
+    expect(entry?.movies).toEqual([SICARIO, THE_LIGHTHOUSE].map(movieSnapshot));
+  });
+
+  it('records no history when the recommendation request fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: 'rate_limited',
+            message: 'Too many recommendation requests. Try again later.',
+          },
+        },
+        429,
+      ),
+    );
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    expect(
+      await screen.findByText('Too many recommendation requests. Try again later.'),
+    ).toBeTruthy();
+    await expect(profile.getHistory()).resolves.toEqual([]);
+  });
+
+  it('records no history when a round returns no movies', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [], coldStart: true }));
+
+    renderApp(profile);
+    await submitPrompt('something impossible');
+
+    expect(await screen.findByText('No picks tonight. Try a different direction.')).toBeTruthy();
+    await expect(profile.getHistory()).resolves.toEqual([]);
+  });
+
+  it('keeps showing picks when the history write fails', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const recordRound = vi
+      .spyOn(profile, 'recordRound')
+      .mockRejectedValue(new Error('Quota exceeded'));
+
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+
+    expect(await screen.findByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    const alternatives = screen.getByRole('list', { name: 'Alternatives' });
+    expect(within(alternatives).getByText('Moonlight')).toBeTruthy();
+    expect(document.querySelector('.status--error')).toBeNull();
+    await waitFor(() => expect(recordRound).toHaveBeenCalledTimes(1));
   });
 });
