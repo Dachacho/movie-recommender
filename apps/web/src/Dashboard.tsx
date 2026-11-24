@@ -2,9 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MovieCard } from '@movie-recommender/shared';
 import { fetchMovie } from './api';
 import { formatRating, meanRating, ratingHistogram, recentActivity } from './dashboardStats';
+import { downloadTextFile } from './download';
 import { createMovieLookup, type MovieLookup } from './movieLookup';
 import type { GuestProfile } from './profile/GuestProfile';
 import { MAX_HISTORY_ROUNDS, type HistoryEntry, type RatingRecord } from './profile/schema';
+import {
+  buildLetterboxdCsv,
+  buildProfileBackup,
+  isoDate,
+  ratingRowsForExport,
+} from './profileExport';
 
 export interface DashboardProps {
   profile: GuestProfile;
@@ -25,6 +32,20 @@ interface DashboardData {
 const LOAD_ERROR_MESSAGE = 'Could not load your dashboard. Try again.';
 const REMOVE_RATING_ERROR_MESSAGE = 'Could not remove that rating. Try again.';
 const REMOVE_WATCHLIST_ERROR_MESSAGE = 'Could not change your watchlist. Try again.';
+const EXPORT_RATINGS_ERROR_MESSAGE = 'Could not export your ratings. Try again.';
+const EXPORT_BACKUP_ERROR_MESSAGE = 'Could not export your backup. Try again.';
+const DELETE_PROFILE_ERROR_MESSAGE = 'Could not delete your profile. Try again.';
+
+const DELETE_PROFILE_WARNING =
+  'This deletes your ratings, watchlist, watched films, cooldowns and recommendation history on this device. It cannot be undone.';
+
+type DataAction = 'ratings' | 'backup' | 'delete';
+
+const DATA_ACTION_ERROR_MESSAGES: Record<DataAction, string> = {
+  ratings: EXPORT_RATINGS_ERROR_MESSAGE,
+  backup: EXPORT_BACKUP_ERROR_MESSAGE,
+  delete: DELETE_PROFILE_ERROR_MESSAGE,
+};
 
 /** The ledger shows the newest rounds; stats still read everything retained. */
 const RECENT_HISTORY_LIMIT = 10;
@@ -82,6 +103,18 @@ function ratingLabel(rating: number): string {
 
 function countLabel(count: number): string {
   return `${count} rated ${count === 1 ? 'film' : 'films'}`;
+}
+
+function exportedRatingsMessage(count: number, skipped: number): string {
+  const exported = `Exported ${String(count)} ${count === 1 ? 'rating' : 'ratings'}.`;
+
+  if (skipped === 0) {
+    return exported;
+  }
+
+  return `${exported} ${String(skipped)} ${
+    skipped === 1 ? 'film' : 'films'
+  } could not be looked up and were left out.`;
 }
 
 function activityLabel(rounds: number, replacements: number): string {
@@ -153,6 +186,11 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   const [loadFailed, setLoadFailed] = useState(false);
   const [removeRatingError, setRemoveRatingError] = useState<string | null>(null);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
+  const [dataAction, setDataAction] = useState<DataAction | null>(null);
+  const [dataStatus, setDataStatus] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const dataActionInFlight = useRef(false);
   const loadId = useRef(0);
 
   const loadDashboard = useCallback(async (): Promise<void> => {
@@ -235,6 +273,78 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     }
 
     await loadDashboard();
+  }
+
+  /**
+   * One guard for every "Your data" action: a second click while storage is
+   * being read or a download is starting must not run the action twice.
+   */
+  async function runDataAction(action: DataAction, task: () => Promise<string>): Promise<void> {
+    if (dataActionInFlight.current) {
+      return;
+    }
+
+    dataActionInFlight.current = true;
+    setDataAction(action);
+    setDataStatus(null);
+    setDataError(null);
+
+    try {
+      setDataStatus(await task());
+    } catch {
+      setDataError(DATA_ACTION_ERROR_MESSAGES[action]);
+    } finally {
+      dataActionInFlight.current = false;
+      setDataAction(null);
+    }
+  }
+
+  async function exportRatings(): Promise<void> {
+    await runDataAction('ratings', async () => {
+      const ratings = await profile.getRatings();
+      const cards = await movieLookup.resolveMany(ratings.map((record) => record.movieId));
+      const { rows, skipped } = ratingRowsForExport(ratings, cards);
+      const timestamp = now();
+
+      downloadTextFile(
+        `letterboxd-ratings-${isoDate(timestamp)}.csv`,
+        buildLetterboxdCsv(rows),
+        'text/csv',
+      );
+
+      return exportedRatingsMessage(rows.length, skipped);
+    });
+  }
+
+  async function exportBackup(): Promise<void> {
+    await runDataAction('backup', async () => {
+      const [ratings, watched, watchlist, cooldowns, history] = await Promise.all([
+        profile.getRatings(),
+        profile.getWatched(),
+        profile.getWatchlist(),
+        profile.getCooldowns(),
+        profile.getHistory(MAX_HISTORY_ROUNDS),
+      ]);
+      const timestamp = now();
+
+      downloadTextFile(
+        `movie-recommender-backup-${isoDate(timestamp)}.json`,
+        buildProfileBackup({ ratings, watched, watchlist, cooldowns, history }, timestamp),
+        'application/json',
+      );
+
+      return 'Exported your backup.';
+    });
+  }
+
+  async function deleteProfile(): Promise<void> {
+    await runDataAction('delete', async () => {
+      await profile.clearAll();
+      setConfirmingDelete(false);
+      await loadDashboard();
+
+      return 'Your profile was deleted.';
+    });
   }
 
   function titleFor(movieId: number): string {
@@ -435,6 +545,90 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 })}
               </ol>
             )}
+          </section>
+
+          <section className="dashboard__panel" aria-labelledby="dashboard-data-heading">
+            <h3 className="dashboard__section-heading" id="dashboard-data-heading">
+              Your data
+            </h3>
+
+            <div className="dashboard__data-actions">
+              <button
+                type="button"
+                className="dashboard__data-action"
+                disabled={dataAction !== null || ratedFilms.length === 0}
+                onClick={() => {
+                  void exportRatings();
+                }}
+              >
+                Export ratings (CSV)
+              </button>
+              <button
+                type="button"
+                className="dashboard__data-action"
+                disabled={dataAction !== null}
+                onClick={() => {
+                  void exportBackup();
+                }}
+              >
+                Export backup (JSON)
+              </button>
+              {!confirmingDelete && (
+                <button
+                  type="button"
+                  className="dashboard__data-action"
+                  disabled={dataAction !== null}
+                  onClick={() => {
+                    setConfirmingDelete(true);
+                  }}
+                >
+                  Delete profile
+                </button>
+              )}
+            </div>
+
+            {confirmingDelete && (
+              <div className="dashboard__data-confirm">
+                <p className="dashboard__data-warning" id="dashboard-delete-warning">
+                  {DELETE_PROFILE_WARNING}
+                </p>
+                <div className="dashboard__data-actions">
+                  <button
+                    type="button"
+                    className="dashboard__data-action dashboard__data-action--destructive"
+                    disabled={dataAction !== null}
+                    autoFocus
+                    aria-describedby="dashboard-delete-warning"
+                    onClick={() => {
+                      void deleteProfile();
+                    }}
+                  >
+                    Delete everything
+                  </button>
+                  <button
+                    type="button"
+                    className="dashboard__data-action"
+                    disabled={dataAction !== null}
+                    onClick={() => {
+                      setConfirmingDelete(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <p
+              className={
+                dataError === null
+                  ? 'status dashboard__data-status'
+                  : 'status status--error dashboard__data-status'
+              }
+              role="status"
+            >
+              {dataError ?? dataStatus ?? ''}
+            </p>
           </section>
         </>
       )}

@@ -128,10 +128,15 @@ export class GuestProfile {
     return uniqueSortedIds((await this.getRatings()).map((record) => record.movieId));
   }
 
-  async getWatchedIds(): Promise<number[]> {
+  /** Every valid watched row with its timestamp, sorted by movieId. */
+  async getWatched(): Promise<WatchedRecord[]> {
     const records = parseValidRecords(await this.storage.readWatched(), watchedRecordSchema);
 
-    return uniqueSortedIds(records.map((record) => record.movieId));
+    return records.sort((left, right) => left.movieId - right.movieId);
+  }
+
+  async getWatchedIds(): Promise<number[]> {
+    return uniqueSortedIds((await this.getWatched()).map((record) => record.movieId));
   }
 
   async setWatched(movieId: number): Promise<WatchedRecord> {
@@ -147,10 +152,15 @@ export class GuestProfile {
     this.version += 1;
   }
 
-  async getWatchlistIds(): Promise<number[]> {
+  /** Every valid watchlist row with its timestamp, sorted by movieId. */
+  async getWatchlist(): Promise<WatchlistRecord[]> {
     const records = parseValidRecords(await this.storage.readWatchlist(), watchlistRecordSchema);
 
-    return uniqueSortedIds(records.map((record) => record.movieId));
+    return records.sort((left, right) => left.movieId - right.movieId);
+  }
+
+  async getWatchlistIds(): Promise<number[]> {
+    return uniqueSortedIds((await this.getWatchlist()).map((record) => record.movieId));
   }
 
   async addToWatchlist(movieId: number): Promise<WatchlistRecord> {
@@ -167,15 +177,27 @@ export class GuestProfile {
   }
 
   /**
+   * Every valid cooldown row with its expiry, including expired ones, sorted
+   * by movieId. Callers that only care about tonight's suppression use
+   * `getActiveCooldownIds`.
+   */
+  async getCooldowns(): Promise<CooldownRecord[]> {
+    const records = parseValidRecords(await this.storage.readCooldowns(), cooldownRecordSchema);
+
+    return records.sort((left, right) => left.movieId - right.movieId);
+  }
+
+  /**
    * Cooldowns suppress a film that was replaced for seven days. They are a
    * "not tonight" signal: never a dislike and never a rating.
    */
   async getActiveCooldownIds(): Promise<number[]> {
     const now = this.now();
-    const records = parseValidRecords(await this.storage.readCooldowns(), cooldownRecordSchema);
 
     return uniqueSortedIds(
-      records.filter((record) => record.expiresAt > now).map((record) => record.movieId),
+      (await this.getCooldowns())
+        .filter((record) => record.expiresAt > now)
+        .map((record) => record.movieId),
     );
   }
 

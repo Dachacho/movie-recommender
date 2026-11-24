@@ -1,11 +1,19 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { MovieCard } from '@movie-recommender/shared';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Dashboard } from './Dashboard';
+import { downloadTextFile } from './download';
 import type { MovieLookup } from './movieLookup';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
 import type { HistoryEntry } from './profile/schema';
+import { isoDate, parseProfileBackup } from './profileExport';
+
+vi.mock('./download', () => ({
+  downloadTextFile: vi.fn(),
+}));
+
+const download = vi.mocked(downloadTextFile);
 
 const NOW = new Date(2026, 10, 24, 15, 4).getTime();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -672,5 +680,249 @@ describe('Dashboard', () => {
     renderDashboard(profile, fakeLookup([]));
 
     expect(await screen.findByText('Could not load your dashboard. Try again.')).toBeTruthy();
+  });
+});
+
+describe('Dashboard your data', () => {
+  beforeEach(() => {
+    download.mockClear();
+  });
+
+  function latestDownload(): { filename: string; contents: string; mimeType: string } {
+    const call = download.mock.calls.at(-1);
+
+    expect(call).toBeDefined();
+
+    if (call === undefined) {
+      throw new Error('expected a download call');
+    }
+
+    return { filename: call[0], contents: call[1], mimeType: call[2] };
+  }
+
+  it('disables the ratings export until a rating exists', async () => {
+    const { profile } = createProfile();
+
+    renderDashboard(profile, fakeLookup([]));
+
+    const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
+    const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
+
+    expect(exportRatings.hasAttribute('disabled')).toBe(true);
+    expect(exportBackup.hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Delete profile' })).toBeTruthy();
+  });
+
+  it('exports an empty backup for a new guest', async () => {
+    const { profile } = createProfile();
+
+    renderDashboard(profile, fakeLookup([]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export backup (JSON)' }));
+
+    expect(await screen.findByText('Exported your backup.')).toBeTruthy();
+
+    const backup = parseProfileBackup(latestDownload().contents);
+
+    expect(backup.exportedAt).toBe(new Date(NOW).toISOString());
+    expect(backup.ratings).toEqual([]);
+    expect(backup.watched).toEqual([]);
+    expect(backup.watchlist).toEqual([]);
+    expect(backup.cooldowns).toEqual([]);
+    expect(backup.history).toEqual([]);
+  });
+
+  it('downloads two ratings as a Letterboxd CSV without double-firing', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: 1, rating: 4.5, updatedAt: NOW - 1000 },
+      { movieId: 2, rating: 3, updatedAt: NOW - 2000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
+
+    const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
+
+    expect(exportRatings.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(exportRatings);
+    fireEvent.click(exportRatings);
+
+    expect(await screen.findByText('Exported 2 ratings.')).toBeTruthy();
+    expect(download).toHaveBeenCalledTimes(1);
+
+    const { filename, contents, mimeType } = latestDownload();
+
+    expect(filename).toBe(`letterboxd-ratings-${isoDate(NOW)}.csv`);
+    expect(mimeType).toBe('text/csv');
+    expect(contents).toBe(
+      [
+        'Date,Name,Year,Letterboxd URI,Rating',
+        `${isoDate(NOW - 1000)},Arrival,2016,,4.5`,
+        `${isoDate(NOW - 2000)},Moonlight,2016,,3`,
+      ].join('\n'),
+    );
+    expect(screen.getByRole('status').textContent).toBe('Exported 2 ratings.');
+  });
+
+  it('uses singular copy and names ratings whose films are missing from the catalog', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: 1, rating: 5, updatedAt: NOW - 1000 },
+      { movieId: 98, rating: 2, updatedAt: NOW - 2000 },
+      { movieId: 99, rating: 3, updatedAt: NOW - 3000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export ratings (CSV)' }));
+
+    expect(
+      await screen.findByText(
+        'Exported 1 rating. 2 films could not be looked up and were left out.',
+      ),
+    ).toBeTruthy();
+
+    const { contents } = latestDownload();
+
+    expect(contents).toBe(
+      ['Date,Name,Year,Letterboxd URI,Rating', `${isoDate(NOW - 1000)},Arrival,2016,,5`].join('\n'),
+    );
+  });
+
+  it('downloads a backup that parses back with every seeded row and timestamp', async () => {
+    const { profile, storage } = createProfile();
+    const historyEntry: HistoryEntry = {
+      id: 1,
+      createdAt: NOW - 3000,
+      kind: 'round',
+      source: 'catalog',
+      prompt: '',
+      replacedMovieId: null,
+      movies: [snapshot(ARRIVAL)],
+    };
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW - 1000 }]);
+    storage.seedWatched([{ movieId: 2, watchedAt: NOW - 2000 }]);
+    storage.seedWatchlist([{ movieId: 3, addedAt: NOW - 2500 }]);
+    storage.seedCooldowns([
+      { movieId: 5, expiresAt: NOW - DAY_MS },
+      { movieId: 4, expiresAt: NOW + DAY_MS },
+    ]);
+    storage.seedHistory([historyEntry]);
+
+    renderDashboard(profile, fakeLookup([]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Export backup (JSON)' }));
+
+    expect(await screen.findByText('Exported your backup.')).toBeTruthy();
+
+    const { filename, contents, mimeType } = latestDownload();
+    const backup = parseProfileBackup(contents);
+
+    expect(filename).toBe(`movie-recommender-backup-${isoDate(NOW)}.json`);
+    expect(mimeType).toBe('application/json');
+    expect(backup.exportedAt).toBe(new Date(NOW).toISOString());
+    expect(backup.ratings).toEqual([{ movieId: 1, rating: 4.5, updatedAt: NOW - 1000 }]);
+    expect(backup.watched).toEqual([{ movieId: 2, watchedAt: NOW - 2000 }]);
+    expect(backup.watchlist).toEqual([{ movieId: 3, addedAt: NOW - 2500 }]);
+    expect(backup.cooldowns).toEqual([
+      { movieId: 4, expiresAt: NOW + DAY_MS },
+      { movieId: 5, expiresAt: NOW - DAY_MS },
+    ]);
+    expect(backup.history).toEqual([historyEntry]);
+  });
+
+  it('reveals the delete confirmation first and restores the button on cancel', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    const clearAll = vi.spyOn(profile, 'clearAll');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete profile' }));
+
+    expect(
+      screen.getByText(
+        'This deletes your ratings, watchlist, watched films, cooldowns and recommendation history on this device. It cannot be undone.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete everything' })).toBeTruthy();
+    expect(clearAll).not.toHaveBeenCalled();
+    await expect(profile.getRatings()).resolves.toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByText(/This deletes your ratings/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete everything' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete profile' })).toBeTruthy();
+    await expect(profile.getRatings()).resolves.toHaveLength(1);
+  });
+
+  it('deletes every profile row after confirmation and reloads the dashboard', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
+    storage.seedWatched([{ movieId: 2, watchedAt: NOW }]);
+    storage.seedWatchlist([{ movieId: 3, addedAt: NOW }]);
+    storage.seedCooldowns([{ movieId: 4, expiresAt: NOW + DAY_MS }]);
+    storage.seedHistory([
+      {
+        id: 1,
+        createdAt: NOW,
+        kind: 'round',
+        source: 'catalog',
+        prompt: '',
+        replacedMovieId: null,
+        movies: [snapshot(ARRIVAL)],
+      },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    const clearAll = vi.spyOn(profile, 'clearAll');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete everything' }));
+
+    expect(await screen.findByText('Your profile was deleted.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Your profile was deleted.');
+    expect(clearAll).toHaveBeenCalledTimes(1);
+
+    await expect(profile.getRatings()).resolves.toEqual([]);
+    await expect(profile.getWatched()).resolves.toEqual([]);
+    await expect(profile.getWatchlist()).resolves.toEqual([]);
+    await expect(profile.getCooldowns()).resolves.toEqual([]);
+    await expect(profile.getHistory()).resolves.toEqual([]);
+
+    const counts = Array.from(document.querySelectorAll('.dashboard__count')).map(
+      (item) => item.textContent,
+    );
+
+    expect(counts).toEqual(['0 rated', '0 watched', '0 watchlisted', '0 cooling down']);
+    expect(screen.queryByRole('button', { name: 'Delete everything' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete profile' })).toBeTruthy();
+  });
+
+  it('keeps the profile and shows the failure copy when deletion fails', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
+    vi.spyOn(profile, 'clearAll').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete everything' }));
+
+    expect(await screen.findByText('Could not delete your profile. Try again.')).toBeTruthy();
+    await expect(profile.getRatings()).resolves.toEqual([
+      { movieId: 1, rating: 4.5, updatedAt: NOW },
+    ]);
+    expect(screen.getByRole('button', { name: 'Remove rating for Arrival' })).toBeTruthy();
   });
 });

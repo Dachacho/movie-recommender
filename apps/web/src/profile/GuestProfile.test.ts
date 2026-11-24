@@ -126,6 +126,55 @@ describe('GuestProfile', () => {
     await expect(profile.getWatchlistIds()).resolves.toEqual([4, 8]);
   });
 
+  it('returns valid watched, watchlist and cooldown records sorted by movie id', async () => {
+    const now = 10_000;
+    const { profile, storage } = setup({ now: () => now });
+
+    storage.seedWatched([
+      { movieId: 9, watchedAt: 2 },
+      null,
+      { movieId: 3, watchedAt: 1 },
+      { movieId: 1.5, watchedAt: 1 },
+    ]);
+    storage.seedWatchlist([
+      { movieId: 8, addedAt: 2 },
+      { movieId: 4, addedAt: 1 },
+      { movieId: 'bad', addedAt: 1 },
+    ]);
+    storage.seedCooldowns([
+      { movieId: 7, expiresAt: now + 1 },
+      { movieId: 5, expiresAt: now - 1 },
+      { movieId: 6, expiresAt: -1 },
+    ]);
+
+    await expect(profile.getWatched()).resolves.toEqual([
+      { movieId: 3, watchedAt: 1 },
+      { movieId: 9, watchedAt: 2 },
+    ]);
+    await expect(profile.getWatchlist()).resolves.toEqual([
+      { movieId: 4, addedAt: 1 },
+      { movieId: 8, addedAt: 2 },
+    ]);
+    await expect(profile.getCooldowns()).resolves.toEqual([
+      { movieId: 5, expiresAt: now - 1 },
+      { movieId: 7, expiresAt: now + 1 },
+    ]);
+  });
+
+  it('keeps expired cooldowns in getCooldowns while active ids exclude them', async () => {
+    const now = 10_000;
+    const { profile, storage } = setup({ now: () => now });
+
+    storage.seedCooldowns([
+      { movieId: 3, expiresAt: now + 1 },
+      { movieId: 4, expiresAt: now },
+      { movieId: 5, expiresAt: now - 1 },
+    ]);
+
+    await expect(profile.getCooldowns()).resolves.toHaveLength(3);
+    await expect(profile.getActiveCooldownIds()).resolves.toEqual([3]);
+  });
+
   it('skips malformed stored records instead of passing them through', async () => {
     const { profile, storage } = setup();
 
