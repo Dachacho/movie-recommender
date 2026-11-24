@@ -44,7 +44,7 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 - Follow the stack, layout and module boundaries in ARCHITECTURE.md. Shared request/response schemas go in `packages/shared`.
 - TypeScript strict; explicit types at module boundaries; Zod validation at every external boundary (HTTP, CSV, IndexedDB, env). Parse once, then pass typed values.
 - Validate guest input server-side: finite 384-d vectors, bounded ID arrays, upload size, CSV shape. Parameterize all SQL. Return structured errors and explicit empty results.
-- Guest data stays in IndexedDB. The only guest data sent to the API is the ratings payload for stateless taste computation (defined in ARCHITECTURE.md); it is not logged or persisted.
+- Guest data stays in IndexedDB. The API only receives the transient per-request inputs defined in ARCHITECTURE.md (taste ratings, recommendation id arrays and vectors, catalogue lookups by movie id); none are logged or persisted.
 - Never log personal ratings, imports or other guest data. Secrets come from env and are never committed.
 - Code must pass the configured ESLint and Prettier rules. Fix the cause of a violation; never add `eslint-disable`/`@ts-ignore` or weaken the config to silence a check without approval.
 - Do not invent match percentages or explanatory facts. Recommendation output must contain only real catalog movies.
