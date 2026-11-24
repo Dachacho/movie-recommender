@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   RecommendationApiError,
   RecommendationNetworkError,
+  fetchMovie,
   fetchRecommendations,
   fetchTasteVector,
   importLetterboxd,
@@ -330,4 +331,72 @@ describe('importLetterboxd', () => {
       RecommendationNetworkError,
     );
   });
+});
+
+describe('fetchMovie', () => {
+  it('requests the movie and returns the parsed card', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movie: MOVIE }));
+
+    await expect(fetchMovie(42)).resolves.toEqual(MOVIE);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/movies/42');
+    expect(fetchMock.mock.calls[0]?.[1]).toBeUndefined();
+  });
+
+  it('resolves null when the catalog no longer has the movie', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: { code: 'movie_not_found', message: 'Movie not found.' } }, 404),
+    );
+
+    await expect(fetchMovie(42)).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [400, 'invalid_movie_id', 'Movie id must be a positive integer.'],
+    [500, 'internal_error', 'Something went wrong.'],
+  ])('rejects with the API error code for a %s response', async (status, code, message) => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code, message } }, status));
+
+    await expect(fetchMovie(42)).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code,
+      message,
+    });
+  });
+
+  it('rejects an unexpected success payload instead of returning it', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockResolvedValue(jsonResponse({ movie: { title: 'Not a movie card' } }));
+
+    await expect(fetchMovie(42)).rejects.toMatchObject({
+      name: 'RecommendationApiError',
+      code: 'invalid_response',
+      message: 'The movie lookup returned an unexpected response. Try again.',
+    });
+  });
+
+  it('rejects with a network error when fetch fails', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(fetchMovie(42)).rejects.toBeInstanceOf(RecommendationNetworkError);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
+    'rejects invalid movie id %s without calling fetch',
+    async (movieId) => {
+      const fetchMock = stubFetch();
+
+      await expect(fetchMovie(movieId)).rejects.toMatchObject({
+        name: 'RecommendationApiError',
+        code: 'invalid_movie_id',
+        message: 'Movie id must be an integer between 1 and 2147483647.',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });

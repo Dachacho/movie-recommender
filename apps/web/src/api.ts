@@ -2,6 +2,7 @@ import {
   apiErrorSchema,
   letterboxdImportRequestSchema,
   letterboxdImportResponseSchema,
+  movieDetailResponseSchema,
   movieListResponseSchema,
   movieSearchQuerySchema,
   recommendationResponseSchema,
@@ -26,6 +27,10 @@ const INVALID_TASTE_RESPONSE_MESSAGE =
 const INVALID_SEARCH_QUERY_MESSAGE = 'Enter a search term between 2 and 80 characters.';
 const INVALID_SEARCH_RESPONSE_MESSAGE =
   'The movie search returned an unexpected response. Try again.';
+const INVALID_MOVIE_RESPONSE_MESSAGE =
+  'The movie lookup returned an unexpected response. Try again.';
+const MAX_MOVIE_ID = 2_147_483_647;
+const INVALID_MOVIE_ID_MESSAGE = `Movie id must be an integer between 1 and ${MAX_MOVIE_ID}.`;
 const INVALID_IMPORT_CSV_MESSAGE =
   'Choose a non-empty Letterboxd CSV export of up to 200,000 characters.';
 const INVALID_IMPORT_RESPONSE_MESSAGE =
@@ -128,6 +133,38 @@ export async function searchMovies(query: string): Promise<MovieCard[]> {
   }
 
   return parsed.data.movies;
+}
+
+export async function fetchMovie(movieId: number): Promise<MovieCard | null> {
+  if (!Number.isInteger(movieId) || movieId < 1 || movieId > MAX_MOVIE_ID) {
+    throw new RecommendationApiError('invalid_movie_id', INVALID_MOVIE_ID_MESSAGE);
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/movies/${movieId}`);
+  } catch {
+    throw new RecommendationNetworkError();
+  }
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  const payload = await readJson(response);
+
+  if (!response.ok) {
+    throw apiErrorFromPayload(payload, 'unknown_error');
+  }
+
+  const parsed = movieDetailResponseSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new RecommendationApiError('invalid_response', INVALID_MOVIE_RESPONSE_MESSAGE);
+  }
+
+  return parsed.data.movie;
 }
 
 export async function importLetterboxd(csv: string): Promise<LetterboxdImportResponse> {
