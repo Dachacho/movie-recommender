@@ -32,6 +32,8 @@ export interface GuestProfileStorage {
   writeHistoryEntry(entry: HistoryEntryInput): Promise<number>;
   deleteHistoryEntry(id: number): Promise<void>;
   clearHistory(): Promise<void>;
+  /** Clears every guest-owned table as one operation. */
+  clearAll(): Promise<void>;
 }
 
 export function createDexieStorage(db: GuestProfileDB): GuestProfileStorage {
@@ -63,5 +65,17 @@ export function createDexieStorage(db: GuestProfileDB): GuestProfileStorage {
     writeHistoryEntry: (entry) => db.history.add(entry),
     deleteHistoryEntry: (id) => db.history.delete(id),
     clearHistory: () => db.history.clear(),
+    clearAll: () =>
+      db.transaction(
+        'rw',
+        [db.ratings, db.watched, db.watchlist, db.cooldowns, db.history],
+        async () => {
+          await db.ratings.clear();
+          await db.watched.clear();
+          await db.watchlist.clear();
+          await db.cooldowns.clear();
+          await db.history.clear();
+        },
+      ),
   };
 }

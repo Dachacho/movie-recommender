@@ -270,6 +270,15 @@ export class GuestProfile {
     await this.storage.clearHistory();
   }
 
+  /**
+   * Deletes every guest-owned row as one storage operation. Ratings are gone,
+   * so the taste cache must invalidate exactly once.
+   */
+  async clearAll(): Promise<void> {
+    await this.storage.clearAll();
+    this.version += 1;
+  }
+
   /** Deletes all but the newest MAX_HISTORY_ROUNDS valid entries. */
   private async trimHistory(): Promise<void> {
     const records = parseValidRecords(await this.storage.readHistory(), historyEntrySchema);

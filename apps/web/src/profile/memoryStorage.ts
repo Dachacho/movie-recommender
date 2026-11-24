@@ -153,4 +153,12 @@ export class MemoryGuestProfileStorage implements GuestProfileStorage {
   async clearHistory(): Promise<void> {
     this.history = [];
   }
+
+  async clearAll(): Promise<void> {
+    this.ratings = [];
+    this.watched = [];
+    this.watchlist = [];
+    this.cooldowns = [];
+    this.history = [];
+  }
 }
