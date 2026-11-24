@@ -1,9 +1,10 @@
 # Backlog
 
 ## To do
+- [ ] Taste profile graph in the dashboard: diverging genre-affinity bars (mean rating − 2.5 per genre, with film counts, matching the taste-vector weighting) plus a half-star rating timeline from `updatedAt`. Fully local, reuses the approved catalogue lookups, no schema or endpoint change. A true film-similarity map (embeddings + 2D projection) is a separate decision: it needs a new embeddings endpoint and HIGH-RISK projection math.
 - [ ] Installable PWA: vite-plugin-pwa@2.0.0 (Vite 8 peer, Node ≥20.19, build-time only) with a manifest, 192/512 icons plus apple-touch-icon, and app-shell precache only — no `/api` or TMDB image caching. Deferred by decision while the responsive site ships; PRODUCT.md still requires installability.
 - [ ] Optional accounts, authentication and guest migration.
-- [ ] For discussion: clustered taste — replace the single average taste vector with 2–3 clusters of the guest's rated films (e.g. the horror + animation case), ranking within the cluster tonight's prompt/mood points at. ARCHITECTURE already flags the single-centroid dilution; the evaluation harness can compare per-cluster vs single centroid on held-out likes. Decide after a short experiment round.
+- [ ] For discussion: clustered taste — replace the single average taste vector with 2–3 clusters of the guest's rated films (e.g. the horror + animation case), ranking within the cluster tonight's prompt/mood points at. ARCHITECTURE already flags the single-centroid dilution; the evaluation harness can compare per-cluster vs single centroid on held-out likes. Decide after a short experiment round. Follow-on core levers once clustering is settled: evaluate the interim exploration default (0.5), then prompt/taste weighting and pool/diversity knobs, each only with held-out evidence.
 - [ ] Soft mood boosts (suggestive phrases like "edge of my seat" nudging genres without hard filters): deferred until there is an evaluation path for prompt behavior — the ratings-based harness cannot evidence prompt tuning, and guessing is what the evaluation ticket retired.
 - [ ] Grow the catalog through imports: resolve unmatched films via the live TMDB API and embed + insert them (needs a free TMDB API key and a runtime internet dependency; separate decision on catalog drift vs the curated 40k).
 
