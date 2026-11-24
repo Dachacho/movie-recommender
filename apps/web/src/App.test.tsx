@@ -1741,3 +1741,52 @@ describe('App', () => {
     await waitFor(() => expect(recordRound).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('view navigation', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('defaults to the picks view and follows hash changes between views', async () => {
+    const fetchMock = stubFetch();
+
+    render(<App profile={createProfile()} />);
+
+    expect(getPromptInput()).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Your library' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBeNull();
+
+    window.history.replaceState(null, '', '#dashboard');
+    fireEvent(window, new Event('hashchange'));
+
+    expect(await screen.findByRole('heading', { name: 'Your dashboard' })).toBeTruthy();
+    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Find my movie' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Your library' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBeNull();
+
+    window.history.replaceState(null, '', '#picks');
+    fireEvent(window, new Event('hashchange'));
+
+    expect(await screen.findByLabelText('What are you in the mood for?')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Your dashboard' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBe('page');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the dashboard when the app loads with a dashboard hash', async () => {
+    window.history.replaceState(null, '', '#dashboard');
+
+    render(<App profile={createProfile()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Your dashboard' })).toBeTruthy();
+    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+  });
+});

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { LetterboxdUnmatched, MovieCard } from '@movie-recommender/shared';
 import {
   RecommendationApiError,
@@ -8,6 +8,7 @@ import {
   importLetterboxd,
   type TasteVector,
 } from './api';
+import { Dashboard } from './Dashboard';
 import { Library } from './Library';
 import { convertListPaste } from './listPaste';
 import {
@@ -69,6 +70,8 @@ interface TasteCache {
   version: number;
   vector: TasteVector;
 }
+
+type View = 'picks' | 'dashboard';
 
 export interface AppProps {
   /** Injected in tests; the app uses a Dexie-backed profile. */
@@ -224,6 +227,23 @@ function PosterPlaceholder({ title }: { title: string }) {
   );
 }
 
+function Masthead({ view }: { view: View }) {
+  return (
+    <header className="masthead">
+      <h1>Movie recommender</h1>
+      <nav className="view-nav" aria-label="Views">
+        <a href="#picks" aria-current={view === 'picks' ? 'page' : undefined}>
+          Picks
+        </a>
+        <a href="#dashboard" aria-current={view === 'dashboard' ? 'page' : undefined}>
+          Dashboard
+        </a>
+      </nav>
+      <p className="tagline">One good pick, three alternatives, no endless scrolling.</p>
+    </header>
+  );
+}
+
 function MoviePoster({ movie }: { movie: MovieCard }) {
   const [failedPosterPath, setFailedPosterPath] = useState<string | null>(null);
   const posterPath = movie.posterPath;
@@ -346,6 +366,9 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 
 export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
+  const [view, setView] = useState<View>(() =>
+    window.location.hash === '#dashboard' ? 'dashboard' : 'picks',
+  );
   const [prompt, setPrompt] = useState('');
   const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
   const [surpriseMe, setSurpriseMe] = useState(false);
@@ -361,6 +384,18 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   const actionPending = action.status === 'pending';
   const pending = state.status === 'pending';
+
+  useEffect(() => {
+    function handleHashChange() {
+      setView(window.location.hash === '#dashboard' ? 'dashboard' : 'picks');
+    }
+
+    window.addEventListener('hashchange', handleHashChange);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, []);
 
   function handleSourceChange(next: RecommendationSourceKind): void {
     setSourceKind(next);
@@ -655,12 +690,18 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   const pendingReplaceIndex =
     action.status === 'pending' && action.kind === 'replace' ? action.index : null;
 
+  if (view === 'dashboard') {
+    return (
+      <main className="page">
+        <Masthead view={view} />
+        <Dashboard profile={profile} />
+      </main>
+    );
+  }
+
   return (
     <main className="page">
-      <header className="masthead">
-        <h1>Movie recommender</h1>
-        <p className="tagline">One good pick, three alternatives, no endless scrolling.</p>
-      </header>
+      <Masthead view={view} />
 
       <form className="prompt-form" onSubmit={handleSubmit}>
         <fieldset className="source-picker">
