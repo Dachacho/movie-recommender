@@ -606,6 +606,36 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendation candidate queries', (
       ).rejects.toThrow(/excludeIds/);
     });
 
+    it('skips only the exclude length cap for trusted continuation pages', async () => {
+      const oversized = Array.from(
+        { length: MAX_ID_COUNT + 1 },
+        (_, index) => 2_000_000_000 + index,
+      );
+
+      await expect(
+        findNearestMovies(db, { embedding: unitEmbedding, excludeIds: oversized, limit: 1 }),
+      ).rejects.toThrow(/excludeIds/);
+
+      const rows = await findNearestMovies(db, {
+        embedding: unitEmbedding,
+        candidateIds: [991_000_001, 991_000_002],
+        excludeIds: [991_000_001, ...oversized],
+        trustedExcludeOverflow: true,
+        limit: 1,
+      });
+
+      expect(rows.map((row) => row.movieId)).toEqual([991_000_002]);
+
+      await expect(
+        findNearestMovies(db, {
+          embedding: unitEmbedding,
+          excludeIds: [0, ...oversized],
+          trustedExcludeOverflow: true,
+          limit: 1,
+        }),
+      ).rejects.toThrow(/excludeIds/);
+    });
+
     it('accepts the maximum supported limit and an empty exclude list', async () => {
       const rows = await findNearestMovies(db, {
         embedding: unitEmbedding,

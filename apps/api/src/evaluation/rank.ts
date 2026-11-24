@@ -3,6 +3,7 @@ import { findNearestMovies } from '../modules/recommendations/query.js';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
+  orderPoolByQuality,
   qualityScore,
   selectDiverse,
 } from '../modules/recommendations/select.js';
@@ -540,20 +541,7 @@ export function tiltPool(
   candidates: readonly ScoredCandidate[],
   weight: number,
 ): ScoredCandidate[] {
-  validateWeight(weight, 'weight');
-
-  return [...candidates].sort((left, right) => {
-    const difference =
-      right.similarity +
-      weight * qualityScore(right.voteAverage, right.voteCount) -
-      (left.similarity + weight * qualityScore(left.voteAverage, left.voteCount));
-
-    if (difference !== 0) {
-      return difference;
-    }
-
-    return left.movieId - right.movieId;
-  });
+  return orderPoolByQuality(candidates, weight);
 }
 
 export interface RankingSettings {

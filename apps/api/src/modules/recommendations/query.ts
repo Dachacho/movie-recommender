@@ -91,12 +91,16 @@ function validateEmbedding(embedding: readonly number[]): void {
   }
 }
 
-function validateIds(ids: readonly number[] | undefined, name: string): void {
+function validateIds(
+  ids: readonly number[] | undefined,
+  name: string,
+  allowLengthOverflow = false,
+): void {
   if (ids === undefined) {
     return;
   }
 
-  if (ids.length > MAX_ID_COUNT) {
+  if (!allowLengthOverflow && ids.length > MAX_ID_COUNT) {
     throw new RangeError(
       `${name} must contain at most ${MAX_ID_COUNT} ids, received ${ids.length}.`,
     );
@@ -236,6 +240,12 @@ export async function findNearestMovies(
     candidateIds?: readonly number[];
     exploration?: number;
     limit: number;
+    /**
+     * Internal continuation opt-in: skip only the MAX_ID_COUNT length cap for
+     * excludeIds, so recommend.ts can add already-fetched ids to the next page.
+     * Every other id check still runs, and the default path is unchanged.
+     */
+    trustedExcludeOverflow?: boolean;
   },
 ): Promise<ScoredCandidate[]> {
   const exploration = input.exploration ?? 0;
@@ -244,7 +254,7 @@ export async function findNearestMovies(
   validateExploration(exploration);
   validateEmbedding(input.embedding);
   validateFilters(input.filters);
-  validateIds(input.excludeIds, 'excludeIds');
+  validateIds(input.excludeIds, 'excludeIds', input.trustedExcludeOverflow === true);
   validateIds(input.candidateIds, 'candidateIds');
 
   if (hasEmptyCandidateList(input.candidateIds)) {

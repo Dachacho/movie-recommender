@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
+  orderPoolByQuality,
   qualityScore,
   selectDiverse,
 } from './select.js';
@@ -64,6 +65,49 @@ describe('qualityScore', () => {
   it('clamps out-of-range data to the 0..1 range', () => {
     expect(qualityScore(20, 1_000_000_000)).toBe(1);
     expect(qualityScore(-1, -5)).toBe(0);
+  });
+});
+
+describe('orderPoolByQuality', () => {
+  it('orders by similarity plus the weighted quality score', () => {
+    const pool = [candidate(1, DIVERSE, 0.9, 0, 0), candidate(2, ORTHOGONAL, 0.8, 10, 1_000_000)];
+
+    expect(orderPoolByQuality(pool, 0.25).map((entry) => entry.movieId)).toEqual([2, 1]);
+  });
+
+  it('keeps pure similarity order at weight 0', () => {
+    const pool = [
+      candidate(1, DIVERSE, 0.9, 0, 0),
+      candidate(2, ORTHOGONAL, 0.8, 10, 1_000_000),
+      candidate(3, TASTE_ALIGNED, 0.7, 9.9, 3_000_000),
+    ];
+
+    expect(orderPoolByQuality(pool, 0).map((entry) => entry.movieId)).toEqual([1, 2, 3]);
+  });
+
+  it('breaks equal tilt scores by lower movie id', () => {
+    const pool = [candidate(20, DIVERSE, 0.8), candidate(10, TASTE_ALIGNED, 0.8)];
+
+    expect(orderPoolByQuality(pool, 0.5).map((entry) => entry.movieId)).toEqual([10, 20]);
+  });
+
+  it('returns a new array without mutating the input order', () => {
+    const pool = [candidate(2, DIVERSE, 0.5), candidate(1, ORTHOGONAL, 0.5)];
+
+    const ordered = orderPoolByQuality(pool, 0.12);
+
+    expect(ordered.map((entry) => entry.movieId)).toEqual([1, 2]);
+    expect(pool.map((entry) => entry.movieId)).toEqual([2, 1]);
+    expect(ordered).not.toBe(pool);
+  });
+
+  it('returns an empty array for empty input', () => {
+    expect(orderPoolByQuality([], 0.5)).toEqual([]);
+  });
+
+  it.each([-0.1, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid weight %s', (weight) => {
+    expect(() => orderPoolByQuality([], weight)).toThrow(RangeError);
+    expect(() => orderPoolByQuality([], weight)).toThrow(/weight/);
   });
 });
 

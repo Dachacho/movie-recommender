@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { and, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, isNotNull, lte } from 'drizzle-orm';
 import { createDatabase, type Database } from '../../db/client.js';
 import { movies } from '../../db/schema.js';
 import { recommendMovies } from './recommend.js';
@@ -152,6 +152,32 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendMovies', () => {
     expect(result.coldStart).toBe(false);
     expect(result.movieIds).toHaveLength(4);
     expect(result.movieIds).not.toContain(991_100_001);
+  });
+
+  it('keeps recommending when the guest exclude list is near the id cap', async () => {
+    const excludeRows = await db
+      .select({ movieId: movies.id })
+      .from(movies)
+      .where(isNotNull(movies.embedding))
+      .orderBy(asc(movies.id))
+      .limit(9_900);
+    const excludeIds = excludeRows.map((row) => row.movieId);
+    const excluded = new Set(excludeIds);
+
+    expect(excludeIds).toHaveLength(9_900);
+
+    const result = await recommendMovies(db, {
+      tasteVector: TASTE_VECTOR,
+      excludeIds,
+      limit: 4,
+    });
+
+    expect(result.coldStart).toBe(false);
+    expect(result.movieIds).toHaveLength(4);
+
+    for (const movieId of result.movieIds) {
+      expect(excluded.has(movieId)).toBe(false);
+    }
   });
 
   it('restricts results to the supplied candidate ids', async () => {

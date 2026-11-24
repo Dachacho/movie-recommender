@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { QUALITY_TILT_WEIGHT, selectDiverse } from '../modules/recommendations/select.js';
+import {
+  orderPoolByQuality,
+  QUALITY_TILT_WEIGHT,
+  selectDiverse,
+} from '../modules/recommendations/select.js';
 import type { ScoredCandidate } from '../modules/recommendations/types.js';
 import type { CatalogEntry } from './load.js';
 import {
@@ -457,6 +461,21 @@ describe('tiltPool', () => {
   it('rejects a negative or non-finite weight', () => {
     expect(() => tiltPool([], -1)).toThrow(RangeError);
     expect(() => tiltPool([], Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  });
+});
+
+describe('tiltPool parity', () => {
+  it('matches orderPoolByQuality exactly', () => {
+    const pool = [
+      candidate(3, 0.8, [1, 0], 8, 5_000),
+      candidate(1, 0.9, [0, 1]),
+      candidate(2, 0.8, [1, 0], 9, 1_000_000),
+      candidate(4, 0.7, [0, 1], 5, 10),
+    ];
+
+    for (const weight of [0, 0.12, QUALITY_TILT_WEIGHT, 1]) {
+      expect(tiltPool(pool, weight)).toEqual(orderPoolByQuality(pool, weight));
+    }
   });
 });
 

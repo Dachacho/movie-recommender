@@ -46,6 +46,31 @@ export function qualityScore(voteAverage: number | null, voteCount: number | nul
   return VOTE_COUNT_WEIGHT * votes + VOTE_AVERAGE_WEIGHT * average;
 }
 
+/**
+ * Orders a retrieval buffer by `similarity + weight * quality`, tie-breaking by
+ * movie id, and returns a new array. The pool-stage tilt uses this to reorder the
+ * top-500 cosine buffer before slicing the production pool.
+ */
+export function orderPoolByQuality(
+  candidates: readonly ScoredCandidate[],
+  weight: number,
+): ScoredCandidate[] {
+  validateWeight(weight);
+
+  return [...candidates].sort((left, right) => {
+    const difference =
+      right.similarity +
+      weight * qualityScore(right.voteAverage, right.voteCount) -
+      (left.similarity + weight * qualityScore(left.voteAverage, left.voteCount));
+
+    if (difference !== 0) {
+      return difference;
+    }
+
+    return left.movieId - right.movieId;
+  });
+}
+
 function relevance(candidate: ScoredCandidate): number {
   const tilt = QUALITY_TILT_WEIGHT * qualityScore(candidate.voteAverage, candidate.voteCount);
 
@@ -69,6 +94,14 @@ function validateLimit(limit: number): void {
 function validatePenalty(penalty: number): void {
   if (!Number.isFinite(penalty) || penalty < 0 || penalty > 1) {
     throw new RangeError(`penalty must be a finite number between 0 and 1, received ${penalty}.`);
+  }
+}
+
+function validateWeight(weight: number): void {
+  if (!Number.isFinite(weight) || weight < 0) {
+    throw new RangeError(
+      `weight must be a finite number greater than or equal to 0, received ${weight}.`,
+    );
   }
 }
 
