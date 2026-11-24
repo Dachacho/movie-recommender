@@ -835,6 +835,68 @@ describe('Dashboard your data', () => {
     expect(backup.history).toEqual([historyEntry]);
   });
 
+  it('shows the ratings export error, skips the download and releases the guard', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
+    const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
+
+    const getRatings = vi.spyOn(profile, 'getRatings').mockRejectedValue(new Error('read failed'));
+
+    expect(exportRatings.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(exportRatings);
+
+    expect(await screen.findByText('Could not export your ratings. Try again.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe(
+      'Could not export your ratings. Try again.',
+    );
+    expect(download).not.toHaveBeenCalled();
+    await waitFor(() => expect(exportRatings.hasAttribute('disabled')).toBe(false));
+    expect(exportBackup.hasAttribute('disabled')).toBe(false);
+
+    getRatings.mockRestore();
+    fireEvent.click(exportRatings);
+
+    expect(await screen.findByText('Exported 1 rating.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Exported 1 rating.');
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the backup export error, skips the download and releases the guard', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
+    const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
+
+    const getWatched = vi.spyOn(profile, 'getWatched').mockRejectedValue(new Error('read failed'));
+
+    expect(exportBackup.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(exportBackup);
+
+    expect(await screen.findByText('Could not export your backup. Try again.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Could not export your backup. Try again.');
+    expect(download).not.toHaveBeenCalled();
+    await waitFor(() => expect(exportBackup.hasAttribute('disabled')).toBe(false));
+    expect(exportRatings.hasAttribute('disabled')).toBe(false);
+
+    getWatched.mockRestore();
+    fireEvent.click(exportBackup);
+
+    expect(await screen.findByText('Exported your backup.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Exported your backup.');
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
   it('reveals the delete confirmation first and restores the button on cancel', async () => {
     const { profile, storage } = createProfile();
 
