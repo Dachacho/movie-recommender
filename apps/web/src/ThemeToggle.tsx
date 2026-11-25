@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useTheme } from './theme';
 
 export function ThemeToggle() {
   const { theme, toggle } = useTheme();
+  const [hasChangedTheme, setHasChangedTheme] = useState(false);
   const isDark = theme === 'dark';
   const actionLabel = isDark ? 'Switch to light mode' : 'Switch to dark mode';
 
@@ -11,9 +13,15 @@ export function ThemeToggle() {
       className="theme-toggle"
       aria-label={actionLabel}
       title={actionLabel}
-      onClick={toggle}
+      onClick={() => {
+        // The first render is not a change; only later icon swaps animate.
+        setHasChangedTheme(true);
+        toggle();
+      }}
     >
       <svg
+        key={isDark ? 'sun' : 'moon'}
+        className={hasChangedTheme ? 'theme-toggle__icon' : undefined}
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"

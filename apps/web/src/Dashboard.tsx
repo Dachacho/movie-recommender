@@ -29,6 +29,17 @@ interface DashboardData {
   history: HistoryEntry[];
 }
 
+interface TitleBatch {
+  /** Ids the batch was requested for, joined; null before the first request. */
+  key: string | null;
+  settled: boolean;
+  movies: ReadonlyMap<number, MovieCard | null>;
+}
+
+function TitlePlaceholder() {
+  return <span className="title-skeleton" aria-hidden="true" />;
+}
+
 const LOAD_ERROR_MESSAGE = 'Could not load your dashboard. Try again.';
 const REMOVE_RATING_ERROR_MESSAGE = 'Could not remove that rating. Try again.';
 const REMOVE_WATCHLIST_ERROR_MESSAGE = 'Could not change your watchlist. Try again.';
@@ -185,7 +196,11 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   const [defaultLookup] = useState(() => createMovieLookup(fetchMovie));
   const movieLookup = lookup ?? defaultLookup;
   const [data, setData] = useState<DashboardData | null>(null);
-  const [titles, setTitles] = useState<ReadonlyMap<number, MovieCard | null>>(() => new Map());
+  const [titleBatch, setTitleBatch] = useState<TitleBatch>(() => ({
+    key: null,
+    settled: false,
+    movies: new Map(),
+  }));
   const [loadFailed, setLoadFailed] = useState(false);
   const [removeRatingError, setRemoveRatingError] = useState<string | null>(null);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
@@ -200,9 +215,9 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     loadId.current += 1;
     const currentLoadId = loadId.current;
 
-    // Rows fall back to "Movie #<id>" until the new batch resolves; a rejected
-    // batch must not leave titles from an earlier load on screen.
-    setTitles(new Map());
+    // Preview rows shimmer until the new title batch settles; a rejected batch
+    // settles without titles so rows fall back to "Movie #<id>".
+    setTitleBatch((previous) => ({ ...previous, settled: false }));
 
     try {
       const [ratings, watchedIds, watchlistIds, cooldownIds, history] = await Promise.all([
@@ -232,19 +247,27 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
           .map((record) => record.movieId),
         ...watchlistIds.slice(0, PREVIEW_COUNT),
       ];
+      const key = ids.join(',');
+
+      setTitleBatch((previous) =>
+        previous.key === key ? previous : { key, settled: false, movies: new Map() },
+      );
 
       try {
         const resolved = await movieLookup.resolveMany(ids);
 
         if (loadId.current === currentLoadId) {
-          setTitles(resolved);
+          setTitleBatch({ key, settled: true, movies: resolved });
         }
       } catch {
-        // Rows keep their "Movie #<id>" fallback; a failed lookup is not a load failure.
+        if (loadId.current === currentLoadId) {
+          setTitleBatch({ key, settled: true, movies: new Map() });
+        }
       }
     } catch {
       if (loadId.current === currentLoadId) {
         setLoadFailed(true);
+        setTitleBatch((previous) => ({ ...previous, settled: true, movies: new Map() }));
       }
     }
   }, [profile, movieLookup]);
@@ -355,15 +378,29 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     });
   }
 
-  function titleFor(movieId: number): string {
-    return titles.get(movieId)?.title ?? `Movie #${String(movieId)}`;
+  const ratedFilms = data === null ? [] : ratedFilmsByRecency(data.ratings);
+  const previewRatedFilms = ratedFilms.slice(0, PREVIEW_COUNT);
+  const previewWatchlistIds = data === null ? [] : data.watchlistIds.slice(0, PREVIEW_COUNT);
+  const previewIds = [...previewRatedFilms.map((record) => record.movieId), ...previewWatchlistIds];
+  const titlesSettled = titleBatch.key === previewIds.join(',') && titleBatch.settled;
+
+  /** Null while the preview batch is still resolving; a known miss falls back. */
+  function titleFor(movieId: number): string | null {
+    if (!titlesSettled) {
+      return null;
+    }
+
+    return titleBatch.movies.get(movieId)?.title ?? `Movie #${String(movieId)}`;
   }
 
   function yearFor(movieId: number): number | null {
-    return titles.get(movieId)?.releaseYear ?? null;
+    if (!titlesSettled) {
+      return null;
+    }
+
+    return titleBatch.movies.get(movieId)?.releaseYear ?? null;
   }
 
-  const ratedFilms = data === null ? [] : ratedFilmsByRecency(data.ratings);
   const histogram = ratingHistogram(ratedFilms);
   const maxCount = histogram.reduce((max, bucket) => Math.max(max, bucket.count), 0);
   const mean = data === null ? null : meanRating(ratedFilms);
@@ -457,15 +494,17 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 <p className="dashboard__empty">{EMPTY_RATINGS_MESSAGE}</p>
               ) : (
                 <>
-                  <ul className="dashboard__rows">
-                    {ratedFilms.slice(0, PREVIEW_COUNT).map((record) => {
+                  <ul className="dashboard__rows" aria-busy={!titlesSettled}>
+                    {previewRatedFilms.map((record) => {
                       const title = titleFor(record.movieId);
                       const year = yearFor(record.movieId);
 
                       return (
                         <li className="dashboard__row" key={record.movieId}>
                           <span className="dashboard__row-film">
-                            <span className="dashboard__row-title">{title}</span>
+                            <span className="dashboard__row-title">
+                              {title === null ? <TitlePlaceholder /> : title}
+                            </span>
                             {year !== null && <span className="dashboard__row-year">{year}</span>}
                           </span>
                           <span className="dashboard__row-rating">
@@ -474,7 +513,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                           <button
                             type="button"
                             className="dashboard__remove"
-                            aria-label={`Remove rating for ${title}`}
+                            aria-label={`Remove rating for ${title ?? 'this film'}`}
                             onClick={() => {
                               void removeRating(record.movieId);
                             }}
@@ -489,7 +528,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                   {ratedFilms.length > PREVIEW_COUNT && (
                     <p className="dashboard__more">
                       {`Showing ${String(PREVIEW_COUNT)} of ${String(ratedFilms.length)}. `}
-                      <a href="#library">Find any film in the library.</a>
+                      <a href="#library">View all rated films.</a>
                     </p>
                   )}
                 </>
@@ -507,21 +546,23 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 <p className="dashboard__empty">{EMPTY_WATCHLIST_MESSAGE}</p>
               ) : (
                 <>
-                  <ul className="dashboard__rows">
-                    {data.watchlistIds.slice(0, PREVIEW_COUNT).map((movieId) => {
+                  <ul className="dashboard__rows" aria-busy={!titlesSettled}>
+                    {previewWatchlistIds.map((movieId) => {
                       const title = titleFor(movieId);
                       const year = yearFor(movieId);
 
                       return (
                         <li className="dashboard__row" key={movieId}>
                           <span className="dashboard__row-film">
-                            <span className="dashboard__row-title">{title}</span>
+                            <span className="dashboard__row-title">
+                              {title === null ? <TitlePlaceholder /> : title}
+                            </span>
                             {year !== null && <span className="dashboard__row-year">{year}</span>}
                           </span>
                           <button
                             type="button"
                             className="dashboard__remove"
-                            aria-label={`Remove ${title} from watchlist`}
+                            aria-label={`Remove ${title ?? 'this film'} from watchlist`}
                             onClick={() => {
                               void removeFromWatchlist(movieId);
                             }}
@@ -536,7 +577,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                   {data.watchlistIds.length > PREVIEW_COUNT && (
                     <p className="dashboard__more">
                       {`Showing ${String(PREVIEW_COUNT)} of ${String(data.watchlistIds.length)}. `}
-                      <a href="#library">Manage your watchlist in the library.</a>
+                      <a href="#library/watchlist">View all watchlist films.</a>
                     </p>
                   )}
                 </>

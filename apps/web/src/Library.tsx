@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { MovieCard } from '@movie-recommender/shared';
-import { RecommendationApiError, RecommendationNetworkError, searchMovies } from './api';
+import {
+  fetchMovie,
+  RecommendationApiError,
+  RecommendationNetworkError,
+  searchMovies,
+} from './api';
+import { formatRating } from './dashboardStats';
 import { LetterboxdImport } from './LetterboxdImport';
 import { ratingFromHalfStarPosition, starFill } from './libraryRatings';
+import { createMovieLookup, type MovieLookup } from './movieLookup';
 import type { GuestProfile } from './profile/GuestProfile';
+
+export type LibraryTab = 'rated' | 'watchlist' | 'find';
 
 type SearchState =
   | { status: 'idle' }
@@ -13,10 +22,34 @@ type SearchState =
 
 const STARS = [1, 2, 3, 4, 5] as const;
 const HALF_STARS = [0, 1] as const;
+const PAGE_SIZE = 12;
 
 const SEARCH_ERROR_MESSAGE = 'Something went wrong while searching. Try again.';
 const LOAD_ERROR_MESSAGE = 'Could not load your library. Try again.';
 const WRITE_ERROR_MESSAGE = 'Could not save your library change. Try again.';
+
+interface RatedEntry {
+  movieId: number;
+  rating: number;
+}
+
+interface TitleBatch {
+  /** Ids the batch was requested for, joined; null before the first request. */
+  key: string | null;
+  settled: boolean;
+  movies: ReadonlyMap<number, MovieCard | null>;
+}
+
+function TitlePlaceholder() {
+  return <span className="title-skeleton" aria-hidden="true" />;
+}
+
+/** Rating first, then movieId, so equal ratings keep a stable catalog order. */
+function ratedEntries(ratings: ReadonlyMap<number, number>): RatedEntry[] {
+  return [...ratings.entries()]
+    .map(([movieId, rating]) => ({ movieId, rating }))
+    .sort((left, right) => right.rating - left.rating || left.movieId - right.movieId);
+}
 
 function searchErrorMessage(error: unknown): string {
   if (error instanceof RecommendationApiError || error instanceof RecommendationNetworkError) {
@@ -90,12 +123,60 @@ function RatingControl({ movieId, title, rating, onSelect }: RatingControlProps)
   );
 }
 
-export function Library({ profile }: { profile: GuestProfile }) {
+interface PagerProps {
+  page: number;
+  totalPages: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}
+
+function Pager({ page, totalPages, onPrevious, onNext }: PagerProps) {
+  return (
+    <div className="library__pager">
+      <button
+        type="button"
+        className="library__pager-button"
+        disabled={page === 0}
+        onClick={onPrevious}
+      >
+        Previous
+      </button>
+      <p className="library__pager-status" aria-live="polite">
+        {`Page ${String(page + 1)} of ${String(totalPages)}`}
+      </p>
+      <button
+        type="button"
+        className="library__pager-button"
+        disabled={page >= totalPages - 1}
+        onClick={onNext}
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
+export interface LibraryProps {
+  profile: GuestProfile;
+  tab?: LibraryTab;
+  /** Injected in tests; defaults to createMovieLookup(fetchMovie). */
+  lookup?: MovieLookup;
+}
+
+export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
+  const [defaultLookup] = useState(() => createMovieLookup(fetchMovie));
+  const movieLookup = lookup ?? defaultLookup;
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState<SearchState>({ status: 'idle' });
   const [ratings, setRatings] = useState<ReadonlyMap<number, number>>(() => new Map());
   const [watchedIds, setWatchedIds] = useState<ReadonlySet<number>>(() => new Set());
   const [watchlistIds, setWatchlistIds] = useState<ReadonlySet<number>>(() => new Set());
+  const [titleBatch, setTitleBatch] = useState<TitleBatch>(() => ({
+    key: null,
+    settled: false,
+    movies: new Map(),
+  }));
+  const [page, setPage] = useState(0);
   const [writeError, setWriteError] = useState<string | null>(null);
   const searchId = useRef(0);
 
@@ -130,6 +211,72 @@ export function Library({ profile }: { profile: GuestProfile }) {
       cancelled = true;
     };
   }, [profile]);
+
+  // Every tab starts at its first page; leaving a tab must not strand the pager.
+  useEffect(() => {
+    setPage(0);
+  }, [tab]);
+
+  const rated = ratedEntries(ratings);
+  const watchlist = [...watchlistIds].sort((left, right) => left - right);
+  const activeCount = tab === 'rated' ? rated.length : tab === 'watchlist' ? watchlist.length : 0;
+  const totalPages = Math.max(1, Math.ceil(activeCount / PAGE_SIZE));
+
+  // A list that shrank past the current page falls back to the first page.
+  useEffect(() => {
+    if (page * PAGE_SIZE >= activeCount) {
+      setPage(0);
+    }
+  }, [activeCount, page]);
+
+  // Resolve only the visible page, never the whole profile: a large library
+  // must not fan out one title request per rated film. The source collections
+  // stay in the dependency list as stable maps/sets; ordered arrays would be
+  // rebuilt on every titles update and retrigger this effect.
+  useEffect(() => {
+    if (tab === 'find') {
+      return;
+    }
+
+    const orderedIds =
+      tab === 'watchlist'
+        ? [...watchlistIds].sort((left, right) => left - right)
+        : ratedEntries(ratings).map((entry) => entry.movieId);
+    const ids = orderedIds.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+    const key = ids.join(',');
+
+    if (ids.length === 0) {
+      setTitleBatch({ key, settled: true, movies: new Map() });
+      return;
+    }
+
+    // A batch already resolved for these ids keeps its titles; a new key
+    // starts settled: false so rows shimmer instead of flashing "Movie #".
+    setTitleBatch((previous) =>
+      previous.key === key && previous.settled
+        ? previous
+        : { key, settled: false, movies: new Map() },
+    );
+
+    let cancelled = false;
+
+    void movieLookup.resolveMany(ids).then(
+      (resolved) => {
+        if (!cancelled) {
+          setTitleBatch({ key, settled: true, movies: resolved });
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setTitleBatch({ key, settled: true, movies: new Map() });
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [movieLookup, page, ratings, tab, watchlistIds]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -228,6 +375,44 @@ export function Library({ profile }: { profile: GuestProfile }) {
     }
   }
 
+  async function handleRemoveFromWatchlist(movieId: number) {
+    setWriteError(null);
+
+    try {
+      await profile.removeFromWatchlist(movieId);
+      setWatchlistIds((previous) => toggledIds(previous, movieId, false));
+    } catch {
+      setWriteError(WRITE_ERROR_MESSAGE);
+    }
+  }
+
+  const visibleRated = rated.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const visibleWatchlist = watchlist.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const visibleIds =
+    tab === 'rated'
+      ? visibleRated.map((entry) => entry.movieId)
+      : tab === 'watchlist'
+        ? visibleWatchlist
+        : [];
+  const titlesSettled = titleBatch.key === visibleIds.join(',') && titleBatch.settled;
+
+  /** Null while the visible batch is still resolving; a known miss falls back. */
+  function titleFor(movieId: number): string | null {
+    if (!titlesSettled) {
+      return null;
+    }
+
+    return titleBatch.movies.get(movieId)?.title ?? `Movie #${String(movieId)}`;
+  }
+
+  function yearFor(movieId: number): number | null {
+    if (!titlesSettled) {
+      return null;
+    }
+
+    return titleBatch.movies.get(movieId)?.releaseYear ?? null;
+  }
+
   return (
     <section className="library" aria-labelledby="library-heading">
       <div className="section-head">
@@ -235,146 +420,266 @@ export function Library({ profile }: { profile: GuestProfile }) {
           Your library
         </h2>
         <p className="library__intro">
-          Rate films you have seen to tune the picks. Watched films are left out of recommendations.
+          Everything you've rated and saved, plus a search to add more.
         </p>
       </div>
 
-      <div className="library__tools">
-        <form className="library__search" onSubmit={handleSearch}>
-          <label htmlFor="library-search">Find a film to rate</label>
-          <div className="library__search-controls">
-            <input
-              id="library-search"
-              name="library-search"
-              type="search"
-              maxLength={80}
-              autoComplete="off"
-              placeholder="Search the catalog…"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <button type="submit" disabled={search.status === 'pending'}>
-              {search.status === 'pending' ? 'Searching…' : 'Search'}
-            </button>
-          </div>
-        </form>
+      <nav className="library__tabs" aria-label="Library sections">
+        <a href="#library/rated" aria-current={tab === 'rated' ? 'page' : undefined}>
+          Rated <span className="library__tab-count">{String(ratings.size)}</span>
+        </a>
+        <a href="#library/watchlist" aria-current={tab === 'watchlist' ? 'page' : undefined}>
+          Watchlist <span className="library__tab-count">{String(watchlistIds.size)}</span>
+        </a>
+        <a href="#library/find" aria-current={tab === 'find' ? 'page' : undefined}>
+          Find films
+        </a>
+      </nav>
 
-        <LetterboxdImport
-          profile={profile}
-          onRatingImported={(movieId, rating) => {
-            setRatings((previous) => new Map(previous).set(movieId, rating));
-          }}
-          onWatchedImported={(movieId) => {
-            setWatchedIds((previous) => toggledIds(previous, movieId, true));
-          }}
-          onWatchlistImported={(movieId) => {
-            setWatchlistIds((previous) => toggledIds(previous, movieId, true));
-          }}
-        />
-      </div>
+      {writeError !== null && <p className="status status--error">{writeError}</p>}
 
-      {search.status === 'idle' && (
-        <div className="library__idle">
-          <p className="library__idle-copy">
-            Search the catalog to rate a film, mark it watched, or save it for later.
-          </p>
-          <ul className="library__idle-counts" aria-label="Library totals">
-            <li className="library__idle-count">
-              <span className="library__idle-count-value">{String(ratings.size)}</span> rated
-            </li>
-            <li className="library__idle-count">
-              <span className="library__idle-count-value">{String(watchedIds.size)}</span> watched
-            </li>
-            <li className="library__idle-count">
-              <span className="library__idle-count-value">{String(watchlistIds.size)}</span>{' '}
-              watchlisted
-            </li>
-          </ul>
-          <a className="library__idle-link" href="#dashboard">
-            See your rating spread
-          </a>
+      {tab === 'rated' && (
+        <div className="library__collection">
+          {rated.length === 0 ? (
+            <p className="library__empty">
+              No rated films yet. <a href="#library/find">Find films to rate.</a>
+            </p>
+          ) : (
+            <>
+              <ul className="library__results" aria-label="Rated films" aria-busy={!titlesSettled}>
+                {visibleRated.map((entry) => {
+                  const title = titleFor(entry.movieId);
+                  const year = yearFor(entry.movieId);
+
+                  return (
+                    <li className="library__row" key={entry.movieId}>
+                      <div className="library__film">
+                        <h3 className="library__title">
+                          {title === null ? <TitlePlaceholder /> : title}
+                        </h3>
+                        {year !== null && <p className="library__year">{year}</p>}
+                      </div>
+                      <div className="library__controls">
+                        <p className="library__rating">{`${formatRating(entry.rating)} / 5`}</p>
+                        <button
+                          type="button"
+                          className="library__clear"
+                          aria-label={`Clear rating for ${title ?? 'this film'}`}
+                          onClick={() => {
+                            void handleClearRating(entry.movieId);
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {activeCount > PAGE_SIZE && (
+                <Pager
+                  page={page}
+                  totalPages={totalPages}
+                  onPrevious={() => {
+                    setPage((current) => Math.max(0, current - 1));
+                  }}
+                  onNext={() => {
+                    setPage((current) => Math.min(totalPages - 1, current + 1));
+                  }}
+                />
+              )}
+            </>
+          )}
         </div>
       )}
 
-      {writeError !== null && <p className="status status--error">{writeError}</p>}
-      {search.status === 'error' && <p className="status status--error">{search.message}</p>}
-      {search.status === 'pending' && <p className="status">Searching the catalog…</p>}
-
-      {search.status === 'results' &&
-        (search.movies.length === 0 ? (
-          <p className="status">No films matched that search.</p>
-        ) : (
-          <>
-            <p className="library__results-label">
-              {`${String(search.movies.length)} ${
-                search.movies.length === 1 ? 'film' : 'films'
-              } found`}
+      {tab === 'watchlist' && (
+        <div className="library__collection">
+          {watchlist.length === 0 ? (
+            <p className="library__empty">
+              Nothing on your watchlist yet. <a href="#library/find">Find films to save.</a>
             </p>
-            <ul className="library__results" aria-label="Search results">
-              {search.movies.map((movie) => {
-                const watched = watchedIds.has(movie.id);
-                const watchlisted = watchlistIds.has(movie.id);
+          ) : (
+            <>
+              <ul
+                className="library__results"
+                aria-label="Watchlist films"
+                aria-busy={!titlesSettled}
+              >
+                {visibleWatchlist.map((movieId) => {
+                  const title = titleFor(movieId);
+                  const year = yearFor(movieId);
 
-                return (
-                  <li className="library__row" key={movie.id}>
-                    <div className="library__film">
-                      <h3 className="library__title">{movie.title}</h3>
-                      {movie.releaseYear !== null && (
-                        <p className="library__year">{movie.releaseYear}</p>
-                      )}
-                    </div>
-                    <div className="library__controls">
-                      <RatingControl
-                        movieId={movie.id}
-                        title={movie.title}
-                        rating={ratings.get(movie.id)}
-                        onSelect={(rating) => {
-                          void handleRate(movie.id, rating);
-                        }}
-                      />
-                      <div className="library__toggles">
-                        <button
-                          type="button"
-                          className="library__toggle"
-                          aria-pressed={watched}
-                          aria-label={`${movie.title}: watched`}
-                          onClick={() => {
-                            void handleWatchedToggle(movie.id);
-                          }}
-                        >
-                          Watched
-                        </button>
-                        <button
-                          type="button"
-                          className="library__toggle"
-                          aria-pressed={watchlisted}
-                          aria-label={`${movie.title}: watchlist`}
-                          onClick={() => {
-                            void handleWatchlistToggle(movie.id);
-                          }}
-                        >
-                          Watchlist
-                        </button>
-                        {ratings.has(movie.id) && (
-                          <button
-                            type="button"
-                            className="library__clear"
-                            aria-label={`Clear rating for ${movie.title}`}
-                            onClick={() => {
-                              void handleClearRating(movie.id);
-                            }}
-                          >
-                            Clear
-                          </button>
-                        )}
+                  return (
+                    <li className="library__row" key={movieId}>
+                      <div className="library__film">
+                        <h3 className="library__title">
+                          {title === null ? <TitlePlaceholder /> : title}
+                        </h3>
+                        {year !== null && <p className="library__year">{year}</p>}
                       </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ))}
+                      <div className="library__controls">
+                        <button
+                          type="button"
+                          className="library__clear"
+                          aria-label={`Remove ${title ?? 'this film'} from watchlist`}
+                          onClick={() => {
+                            void handleRemoveFromWatchlist(movieId);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {activeCount > PAGE_SIZE && (
+                <Pager
+                  page={page}
+                  totalPages={totalPages}
+                  onPrevious={() => {
+                    setPage((current) => Math.max(0, current - 1));
+                  }}
+                  onNext={() => {
+                    setPage((current) => Math.min(totalPages - 1, current + 1));
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'find' && (
+        <>
+          <div className="library__tools">
+            <form className="library__search" onSubmit={handleSearch}>
+              <label htmlFor="library-search">Find a film to rate</label>
+              <div className="library__search-controls">
+                <input
+                  id="library-search"
+                  name="library-search"
+                  type="search"
+                  maxLength={80}
+                  autoComplete="off"
+                  placeholder="Search the catalog…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <button type="submit" disabled={search.status === 'pending'}>
+                  {search.status === 'pending' ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+            </form>
+
+            <LetterboxdImport
+              profile={profile}
+              onRatingImported={(movieId, rating) => {
+                setRatings((previous) => new Map(previous).set(movieId, rating));
+              }}
+              onWatchedImported={(movieId) => {
+                setWatchedIds((previous) => toggledIds(previous, movieId, true));
+              }}
+              onWatchlistImported={(movieId) => {
+                setWatchlistIds((previous) => toggledIds(previous, movieId, true));
+              }}
+            />
+          </div>
+
+          {search.status === 'idle' && (
+            <div className="library__idle">
+              <p className="library__idle-copy">
+                Search the catalog to rate a film, mark it watched, or save it for later.
+              </p>
+              <a className="library__idle-link" href="#dashboard">
+                Open your dashboard
+              </a>
+            </div>
+          )}
+
+          {search.status === 'error' && <p className="status status--error">{search.message}</p>}
+          {search.status === 'pending' && <p className="status">Searching the catalog…</p>}
+
+          {search.status === 'results' &&
+            (search.movies.length === 0 ? (
+              <p className="status">No films matched that search.</p>
+            ) : (
+              <>
+                <p className="library__results-label">
+                  {`${String(search.movies.length)} ${
+                    search.movies.length === 1 ? 'film' : 'films'
+                  } found`}
+                </p>
+                <ul className="library__results" aria-label="Search results">
+                  {search.movies.map((movie) => {
+                    const watched = watchedIds.has(movie.id);
+                    const watchlisted = watchlistIds.has(movie.id);
+
+                    return (
+                      <li className="library__row" key={movie.id}>
+                        <div className="library__film">
+                          <h3 className="library__title">{movie.title}</h3>
+                          {movie.releaseYear !== null && (
+                            <p className="library__year">{movie.releaseYear}</p>
+                          )}
+                        </div>
+                        <div className="library__controls">
+                          <RatingControl
+                            movieId={movie.id}
+                            title={movie.title}
+                            rating={ratings.get(movie.id)}
+                            onSelect={(rating) => {
+                              void handleRate(movie.id, rating);
+                            }}
+                          />
+                          <div className="library__toggles">
+                            <button
+                              type="button"
+                              className="library__toggle"
+                              aria-pressed={watched}
+                              aria-label={`${movie.title}: watched`}
+                              onClick={() => {
+                                void handleWatchedToggle(movie.id);
+                              }}
+                            >
+                              Watched
+                            </button>
+                            <button
+                              type="button"
+                              className="library__toggle"
+                              aria-pressed={watchlisted}
+                              aria-label={`${movie.title}: watchlist`}
+                              onClick={() => {
+                                void handleWatchlistToggle(movie.id);
+                              }}
+                            >
+                              Watchlist
+                            </button>
+                            {ratings.has(movie.id) && (
+                              <button
+                                type="button"
+                                className="library__clear"
+                                aria-label={`Clear rating for ${movie.title}`}
+                                onClick={() => {
+                                  void handleClearRating(movie.id);
+                                }}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ))}
+        </>
+      )}
     </section>
   );
 }

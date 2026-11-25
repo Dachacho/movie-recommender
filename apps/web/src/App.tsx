@@ -9,7 +9,7 @@ import {
   type TasteVector,
 } from './api';
 import { Dashboard } from './Dashboard';
-import { Library } from './Library';
+import { Library, type LibraryTab } from './Library';
 import { convertListPaste } from './listPaste';
 import { ThemeToggle } from './ThemeToggle';
 import {
@@ -74,16 +74,33 @@ interface TasteCache {
 
 type View = 'picks' | 'library' | 'dashboard';
 
-function viewFromHash(hash: string): View {
+interface Route {
+  view: View;
+  libraryTab: LibraryTab;
+}
+
+function libraryTabFromHash(hash: string): LibraryTab {
+  if (hash === '#library/watchlist') {
+    return 'watchlist';
+  }
+
+  if (hash === '#library/find') {
+    return 'find';
+  }
+
+  return 'rated';
+}
+
+function routeFromHash(hash: string): Route {
   if (hash === '#dashboard') {
-    return 'dashboard';
+    return { view: 'dashboard', libraryTab: 'rated' };
   }
 
-  if (hash === '#library') {
-    return 'library';
+  if (hash.startsWith('#library')) {
+    return { view: 'library', libraryTab: libraryTabFromHash(hash) };
   }
 
-  return 'picks';
+  return { view: 'picks', libraryTab: 'rated' };
 }
 
 export interface AppProps {
@@ -109,12 +126,11 @@ const PASTE_IMPORT_ERROR_MESSAGE = 'Could not match that list. Try again.';
 const SOURCE_OPTIONS: readonly {
   value: RecommendationSourceKind;
   label: string;
-  hint: string;
 }[] = [
-  { value: 'catalog', label: 'The whole catalog', hint: 'Everything in the catalog' },
-  { value: 'watchlist', label: 'My watchlist', hint: 'Films you saved' },
-  { value: 'rewatch', label: 'Rewatch shortlist', hint: 'Rated 4 stars or higher' },
-  { value: 'paste', label: "A list I'll paste", hint: 'Titles or Letterboxd CSV' },
+  { value: 'catalog', label: 'The whole catalog' },
+  { value: 'watchlist', label: 'My watchlist' },
+  { value: 'rewatch', label: 'Rewatch shortlist' },
+  { value: 'paste', label: "A list I'll paste" },
 ];
 
 interface PasteReport {
@@ -305,28 +321,14 @@ function Hero() {
         One film for tonight.
       </h2>
       <p className="hero__lede">
-        Tell us the mood, or leave it blank. We'll choose one film and three backups from what
-        you've rated and what you feel like watching.
+        Tell us the mood, or leave it blank. One film and three backups, shaped by what you've
+        rated.
       </p>
       <ul className="hero__notes">
         <li>No account needed</li>
         <li>Your library stays local</li>
         <li>Letterboxd-ready</li>
       </ul>
-      <dl className="hero__principles">
-        <div>
-          <dt>Source</dt>
-          <dd>The whole catalog, your watchlist, or a list you bring.</dd>
-        </div>
-        <div>
-          <dt>Taste</dt>
-          <dd>Your ratings, kept in this browser and never on a server.</dd>
-        </div>
-        <div>
-          <dt>Result</dt>
-          <dd>One film and three backups. Rejects rest for seven days.</dd>
-        </div>
-      </dl>
     </section>
   );
 }
@@ -467,7 +469,8 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 
 export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
-  const [view, setView] = useState<View>(() => viewFromHash(window.location.hash));
+  const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
+  const view = route.view;
   const [prompt, setPrompt] = useState('');
   const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
   const [surpriseMe, setSurpriseMe] = useState(false);
@@ -486,7 +489,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   useEffect(() => {
     function handleHashChange() {
-      setView(viewFromHash(window.location.hash));
+      setRoute(routeFromHash(window.location.hash));
     }
 
     window.addEventListener('hashchange', handleHashChange);
@@ -818,7 +821,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         <SkipLink />
         <Masthead view={view} />
         <main id="main-content" tabIndex={-1} className="page page--library">
-          <Library profile={profile} />
+          <Library profile={profile} tab={route.libraryTab} />
         </main>
       </div>
     );
@@ -842,7 +845,6 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         >
           <div className="prompt-form__head">
             <h2 className="prompt-form__title">Set the brief</h2>
-            <p className="prompt-form__hint">A source, a mood, and that's it.</p>
           </div>
 
           <fieldset className="source-picker">
@@ -857,12 +859,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
                     checked={sourceKind === option.value}
                     onChange={() => handleSourceChange(option.value)}
                   />
-                  <span className="source-picker__copy">
-                    <span className="source-picker__label">{option.label}</span>
-                    <span className="source-picker__hint" aria-hidden="true">
-                      {option.hint}
-                    </span>
-                  </span>
+                  <span className="source-picker__label">{option.label}</span>
                 </label>
               ))}
             </div>
@@ -881,9 +878,6 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             </span>
             <span className="switch-row__copy">
               <span className="switch-row__label">Surprise me</span>
-              <span className="switch-row__hint" aria-hidden="true">
-                Reach past your usual taste
-              </span>
             </span>
           </label>
 
@@ -971,9 +965,6 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           <div className="prompt-form__field">
             <div className="prompt-form__field-head">
               <label htmlFor="prompt">What are you in the mood for?</label>
-              <span className="prompt-form__optional" aria-hidden="true">
-                Optional
-              </span>
             </div>
             <div className="prompt-form__controls">
               <input

@@ -191,13 +191,13 @@ function renderApp(profile: GuestProfile = createProfile()): ReturnType<typeof r
   return render(<App profile={profile} />);
 }
 
-function navigateTo(view: 'picks' | 'library' | 'dashboard'): void {
-  window.history.replaceState(null, '', `#${view}`);
+function navigateTo(path: 'picks' | 'library' | 'library/find' | 'dashboard'): void {
+  window.history.replaceState(null, '', `#${path}`);
   fireEvent(window, new Event('hashchange'));
 }
 
 function renderLibraryApp(profile: GuestProfile = createProfile()): ReturnType<typeof render> {
-  window.history.replaceState(null, '', '#library');
+  window.history.replaceState(null, '', '#library/find');
 
   return render(<App profile={profile} />);
 }
@@ -922,7 +922,7 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await screen.findByRole('button', { name: 'Find my movie' });
 
-    navigateTo('library');
+    navigateTo('library/find');
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -1776,7 +1776,18 @@ describe('view navigation', () => {
     navigateTo('library');
 
     expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
-    expect(screen.getByLabelText('Find a film to rate')).toBeTruthy();
+    const libraryTabs = screen.getByRole('navigation', { name: 'Library sections' });
+    expect(
+      within(libraryTabs)
+        .getByRole('link', { name: /^Rated/ })
+        .getAttribute('aria-current'),
+    ).toBe('page');
+    expect(
+      within(libraryTabs)
+        .getByRole('link', { name: /^Watchlist/ })
+        .getAttribute('aria-current'),
+    ).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
     expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBeNull();
     expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
@@ -1805,14 +1816,76 @@ describe('view navigation', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('opens the library when the app loads with a library hash', async () => {
+  it('opens the library on the rated tab by default', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(3, 4.5);
+    fetchMock.mockResolvedValue(jsonResponse({ movie: HEAT }));
     window.history.replaceState(null, '', '#library');
+
+    render(<App profile={profile} />);
+
+    expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
+    expect(
+      within(tabs)
+        .getByRole('link', { name: /^Rated/ })
+        .getAttribute('aria-current'),
+    ).toBe('page');
+    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBe('page');
+
+    const list = await screen.findByRole('list', { name: 'Rated films' });
+    expect(await within(list).findByRole('heading', { name: 'Heat' })).toBeTruthy();
+    expect(within(list).getByText('1995')).toBeTruthy();
+    expect(within(list).getByText('4½ / 5')).toBeTruthy();
+  });
+
+  it('opens the watchlist tab from a library watchlist hash', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.addToWatchlist(3);
+    fetchMock.mockResolvedValue(jsonResponse({ movie: HEAT }));
+    window.history.replaceState(null, '', '#library/watchlist');
+
+    render(<App profile={profile} />);
+
+    expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
+    expect(
+      within(tabs)
+        .getByRole('link', { name: /^Watchlist/ })
+        .getAttribute('aria-current'),
+    ).toBe('page');
+    expect(
+      within(tabs)
+        .getByRole('link', { name: /^Rated/ })
+        .getAttribute('aria-current'),
+    ).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
+
+    const list = await screen.findByRole('list', { name: 'Watchlist films' });
+    expect(await within(list).findByRole('heading', { name: 'Heat' })).toBeTruthy();
+    expect(within(list).getByText('1995')).toBeTruthy();
+    expect(within(list).getByRole('button', { name: 'Remove Heat from watchlist' })).toBeTruthy();
+  });
+
+  it('opens the find tab from a library find hash', async () => {
+    window.history.replaceState(null, '', '#library/find');
 
     render(<App profile={createProfile()} />);
 
     expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
-    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBe('page');
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
+    expect(
+      within(tabs).getByRole('link', { name: 'Find films' }).getAttribute('aria-current'),
+    ).toBe('page');
+    expect(screen.getByLabelText('Find a film to rate')).toBeTruthy();
+    expect(screen.queryByText(/No rated films yet/)).toBeNull();
+    expect(screen.queryByText(/Nothing on your watchlist yet/)).toBeNull();
   });
 
   it('opens the dashboard when the app loads with a dashboard hash', async () => {

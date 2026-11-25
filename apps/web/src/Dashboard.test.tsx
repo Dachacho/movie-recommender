@@ -399,15 +399,13 @@ describe('Dashboard', () => {
     expect(within(rated).getByText(/Showing 5 of 7\./)).toBeTruthy();
     expect(within(watchlist).getByText(/Showing 5 of 6\./)).toBeTruthy();
     expect(
-      within(rated)
-        .getByRole('link', { name: 'Find any film in the library.' })
-        .getAttribute('href'),
+      within(rated).getByRole('link', { name: 'View all rated films.' }).getAttribute('href'),
     ).toBe('#library');
     expect(
       within(watchlist)
-        .getByRole('link', { name: 'Manage your watchlist in the library.' })
+        .getByRole('link', { name: 'View all watchlist films.' })
         .getAttribute('href'),
-    ).toBe('#library');
+    ).toBe('#library/watchlist');
 
     await waitFor(() => expect(resolvedIds).toHaveLength(1));
     expect(resolvedIds[0]).toEqual([1, 2, 3, 4, 5, 101, 102, 103, 104, 105]);

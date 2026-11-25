@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { LetterboxdImportResponse, MovieCard } from '@movie-recommender/shared';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { Library } from './Library';
+import { Library, type LibraryTab } from './Library';
+import type { MovieLookup } from './movieLookup';
 import { GuestProfile } from './profile/GuestProfile';
 import { MemoryGuestProfileStorage } from './profile/memoryStorage';
 
@@ -64,8 +65,37 @@ function createProfile(): GuestProfile {
   return new GuestProfile(new MemoryGuestProfileStorage());
 }
 
-function renderLibrary(profile: GuestProfile = createProfile()): void {
-  render(<Library profile={profile} />);
+function renderLibrary(
+  profile: GuestProfile = createProfile(),
+  tab: LibraryTab = 'find',
+  lookup?: MovieLookup,
+): void {
+  render(<Library profile={profile} tab={tab} {...(lookup === undefined ? {} : { lookup })} />);
+}
+
+function fakeLookup(movies: readonly MovieCard[]): MovieLookup {
+  return {
+    resolveMany: async (ids) => {
+      const byId = new Map(movies.map((movie) => [movie.id, movie]));
+
+      return new Map(ids.map((movieId) => [movieId, byId.get(movieId) ?? null]));
+    },
+  };
+}
+
+function movieCard(id: number): MovieCard {
+  return {
+    id,
+    title: `Film ${String(id)}`,
+    releaseYear: 1990 + (id % 30),
+    runtime: 100,
+    overview: null,
+    genres: [],
+    director: null,
+    cast: [],
+    posterPath: null,
+    voteAverage: null,
+  };
 }
 
 function fileWithText(text: string, name?: string): File {
@@ -561,7 +591,7 @@ describe('Letterboxd import', () => {
 describe('Library idle state', () => {
   const IDLE_COPY = 'Search the catalog to rate a film, mark it watched, or save it for later.';
 
-  it('introduces the search with local totals and a dashboard link', async () => {
+  it('introduces the search under tab counts and keeps the dashboard link', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();
 
@@ -576,15 +606,15 @@ describe('Library idle state', () => {
 
     expect(screen.getByText(IDLE_COPY)).toBeTruthy();
 
-    const totals = screen.getByRole('list', { name: 'Library totals' });
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
 
-    await waitFor(() =>
-      expect(
-        Array.from(totals.querySelectorAll('.library__idle-count')).map((item) => item.textContent),
-      ).toEqual(['2 rated', '1 watched', '3 watchlisted']),
-    );
+    await waitFor(() => {
+      expect(within(tabs).getByRole('link', { name: 'Rated 2' })).toBeTruthy();
+      expect(within(tabs).getByRole('link', { name: 'Watchlist 3' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('list', { name: 'Library totals' })).toBeNull();
 
-    const link = screen.getByRole('link', { name: 'See your rating spread' });
+    const link = screen.getByRole('link', { name: 'Open your dashboard' });
     expect(link.getAttribute('href')).toBe('#dashboard');
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -603,5 +633,173 @@ describe('Library idle state', () => {
 
     expect(screen.queryByText(IDLE_COPY)).toBeNull();
     expect(screen.getByText('Searching the catalog…')).toBeTruthy();
+  });
+});
+
+describe('Library collection tabs', () => {
+  it('lists rated films by rating then movieId and clears a rating in place', async () => {
+    const profile = createProfile();
+    const lookup = fakeLookup([movieCard(1), movieCard(2), movieCard(3)]);
+
+    await profile.setRating(1, 4);
+    await profile.setRating(2, 5);
+    await profile.setRating(3, 4);
+
+    renderLibrary(profile, 'rated', lookup);
+
+    const list = await screen.findByRole('list', { name: 'Rated films' });
+
+    await screen.findByText('Film 2');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((row) => row.querySelector('.library__title')?.textContent),
+    ).toEqual(['Film 2', 'Film 1', 'Film 3']);
+    expect(within(list).getByText('5 / 5')).toBeTruthy();
+    expect(within(list).getAllByText('4 / 5')).toHaveLength(2);
+    expect(within(list).getByText('1991')).toBeTruthy();
+
+    fireEvent.click(within(list).getByRole('button', { name: 'Clear rating for Film 1' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Clear rating for Film 1' })).toBeNull(),
+    );
+
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
+
+    await waitFor(() => expect(within(tabs).getByRole('link', { name: 'Rated 2' })).toBeTruthy());
+    expect(
+      (await profile.getRatings()).map(({ movieId, rating }) => ({ movieId, rating })),
+    ).toEqual([
+      { movieId: 2, rating: 5 },
+      { movieId: 3, rating: 4 },
+    ]);
+  });
+
+  it('shows the write error and keeps the rated row when clearing fails', async () => {
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+    vi.spyOn(profile, 'removeRating').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderLibrary(profile, 'rated', fakeLookup([movieCard(1)]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear rating for Film 1' }));
+
+    expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear rating for Film 1' })).toBeTruthy();
+  });
+
+  it('lists watchlist films by id and removes one in place', async () => {
+    const profile = createProfile();
+    const lookup = fakeLookup([movieCard(1), movieCard(3)]);
+
+    await profile.addToWatchlist(3);
+    await profile.addToWatchlist(1);
+
+    renderLibrary(profile, 'watchlist', lookup);
+
+    const list = await screen.findByRole('list', { name: 'Watchlist films' });
+
+    await screen.findByText('Film 1');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((row) => row.querySelector('.library__title')?.textContent),
+    ).toEqual(['Film 1', 'Film 3']);
+    expect(within(list).getByText('1991')).toBeTruthy();
+    expect(within(list).getByText('1993')).toBeTruthy();
+
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove Film 1 from watchlist' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Remove Film 1 from watchlist' })).toBeNull(),
+    );
+    await expect(profile.getWatchlistIds()).resolves.toEqual([3]);
+
+    const tabs = screen.getByRole('navigation', { name: 'Library sections' });
+
+    await waitFor(() =>
+      expect(within(tabs).getByRole('link', { name: 'Watchlist 1' })).toBeTruthy(),
+    );
+  });
+
+  it('shows the write error and keeps the watchlist row when removal fails', async () => {
+    const profile = createProfile();
+
+    await profile.addToWatchlist(1);
+    vi.spyOn(profile, 'removeFromWatchlist').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderLibrary(profile, 'watchlist', fakeLookup([movieCard(1)]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Film 1 from watchlist' }));
+
+    expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Remove Film 1 from watchlist' })).toBeTruthy();
+  });
+
+  it('paginates twelve films per page and advances with Next', async () => {
+    const profile = createProfile();
+    const cards = Array.from({ length: 13 }, (_value, index) => movieCard(index + 1));
+
+    for (const card of cards) {
+      await profile.setRating(card.id, 4);
+    }
+
+    renderLibrary(profile, 'rated', fakeLookup(cards));
+
+    const list = await screen.findByRole('list', { name: 'Rated films' });
+
+    expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
+    expect(within(list).getAllByRole('listitem')).toHaveLength(12);
+    expect(within(list).queryByText('Film 13')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Page 2 of 2')).toBeTruthy();
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(list).getByText('Film 13')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('resolves at most twelve titles for the visible page of a thousand-film library', async () => {
+    const storage = new MemoryGuestProfileStorage();
+    const profile = new GuestProfile(storage);
+    const resolvedIds: number[][] = [];
+    const lookup: MovieLookup = {
+      resolveMany: async (ids) => {
+        resolvedIds.push([...ids]);
+
+        return new Map(ids.map((movieId) => [movieId, null]));
+      },
+    };
+
+    storage.seedRatings(
+      Array.from({ length: 1000 }, (_value, index) => ({
+        movieId: index + 1,
+        rating: 4,
+        updatedAt: index,
+      })),
+    );
+
+    renderLibrary(profile, 'rated', lookup);
+
+    expect(await screen.findByText('Page 1 of 84')).toBeTruthy();
+    await waitFor(() => expect(resolvedIds).toHaveLength(1));
+    expect(resolvedIds[0]).toEqual(Array.from({ length: 12 }, (_value, index) => index + 1));
+    expect(await screen.findByText('Movie #1')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Page 2 of 84')).toBeTruthy();
+    await waitFor(() => expect(resolvedIds).toHaveLength(2));
+    expect(resolvedIds[1]).toEqual(Array.from({ length: 12 }, (_value, index) => index + 13));
+    expect(resolvedIds.every((ids) => ids.length <= 12)).toBe(true);
   });
 });
