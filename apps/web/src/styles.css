@@ -33,6 +33,9 @@
   --space-9: 3rem;
   --space-10: 4rem;
   --space-11: 5rem;
+  --duration-fast: 120ms;
+  --duration-slow: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --amber: #e0a458;
   --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
   --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -120,6 +123,10 @@ body {
   color: var(--text-3);
   font-size: 0.9rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .prompt-form .source-picker__option:hover {
@@ -159,6 +166,9 @@ body {
   font-size: 0.95rem;
   line-height: 1.5;
   resize: vertical;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
 }
 
 .list-paste textarea::placeholder {
@@ -198,6 +208,12 @@ body {
   font: inherit;
 }
 
+.prompt-form input:not([type='radio']):not([type='checkbox']) {
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
 .prompt-form input::placeholder {
   color: var(--text-3);
 }
@@ -211,6 +227,10 @@ body {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .prompt-form button:disabled {
@@ -262,6 +282,10 @@ body {
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .pick-action:hover:not(:disabled) {
@@ -286,13 +310,13 @@ body {
 .picks {
   display: grid;
   gap: clamp(var(--space-8), 6vw, var(--space-10));
-  animation: picks-in 420ms ease-out both;
+  animation: picks-in var(--duration-slow) var(--ease-out) both;
 }
 
 @keyframes picks-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(6px);
   }
 
   to {
@@ -447,6 +471,10 @@ body {
   color: var(--text-1);
   font-size: 0.85rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .import__file:hover {
@@ -537,6 +565,9 @@ body {
   color: var(--text-1);
   font: inherit;
   font-size: 0.95rem;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
 }
 
 .library__search input::placeholder {
@@ -553,6 +584,10 @@ body {
   font: inherit;
   font-size: 0.9rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .library__search button:hover:not(:disabled) {
@@ -629,6 +664,10 @@ body {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .library__toggle:hover {
@@ -730,6 +769,10 @@ body {
   border-bottom: 1px solid transparent;
   color: var(--text-3);
   text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .view-nav a:hover {
@@ -909,6 +952,10 @@ body {
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .dashboard__remove:hover {
@@ -982,6 +1029,10 @@ body {
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .dashboard__data-action:hover:not(:disabled) {
@@ -1049,6 +1100,11 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-slow: 0ms;
+  }
+
   .picks {
     animation: none;
   }
