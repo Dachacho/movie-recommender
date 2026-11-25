@@ -66,16 +66,38 @@ Operating contract for coding agents on this project. PRODUCT.md defines what is
 
 ### Skills
 
-The skill registry includes built-in skills such as `opencode` and `report` as well as the project-local skills in `.agents/skills/`. OpenCode advertises each description; load a skill when its description matches the task and the conditions below. PRODUCT.md, ARCHITECTURE.md, this file and the §2 approval gates override any skill; a skill never justifies a new dependency, schema change or scope expansion.
+The skill registry includes built-in skills such as `opencode` and `report` as well as the project-local skills in `.agents/skills/` and `.opencode/skills/`. OpenCode advertises each description; load a skill when its description matches the task and the conditions below. PRODUCT.md, ARCHITECTURE.md, this file and the §2 approval gates override any skill; a skill never justifies a new dependency, schema change or scope expansion.
 
 - **test-driven-development** — load for complex or high-risk logic: taste-vector math, ranking, diversity, filters, cooldown edges, CSV and list matching. Write the failing test first; cover edge cases, failure paths and relevant invariants. Ordinary features and UI behaviour need appropriate tests but not test-first; trivial changes need none. Bug fixes get a regression test when practical.
 - **systematic-debugging** — load for every bug, failing test or unexpected result before proposing a fix. Find the root cause first. After three failed fixes, stop and raise the architectural question instead of trying a fourth.
 - **verification-before-completion** — load before any claim that work is done or passing, and before the final report. Run the exact command, read the full output and state only what it proves. Reviewers check the supplied raw output instead, because their permissions deny shell.
 - **receiving-code-review** — load when acting on reviewer findings: verify each finding against the code, push back with reasoning if it is wrong, and fix one item at a time.
 - **frontend-design** — load when building or reshaping the recommendation screen, dashboard or other user-facing UI. Produce a short design plan (palette, type, layout, principles) before writing code, then stay within the approved plain-CSS stack and accessibility requirements.
-- **apple-design** — load when adding or reviewing motion, gestures or interaction feel. It describes Apple's fluid-interface approach (springs, velocity, interruptibility) for the web: translate it to the existing plain CSS and Web Animations API, keep it under frontend-design's restraint rules (motion answers a user action, one orchestrated moment), and never treat it as grounds for adding an animation library.
+- **ui-ux-pro-max** — load when selecting a design system, colour palette, type pairing, layout pattern or stack-specific UI guidance. Use its bundled search script rather than guessing.
+- **apple-design** — load for Apple-style motion, gestures or interaction feel. It describes Apple's fluid-interface approach (springs, velocity, interruptibility) for the web: translate it to the existing plain CSS and Web Animations API, keep it under frontend-design's restraint rules (motion answers a user action, one orchestrated moment), and never treat it as grounds for adding an animation library.
+- **emil-design-eng** — load for general animation, transition and microinteraction decisions: press and hover feedback, popover origin, tooltip timing, easing and interruption. Keep motion functional and inside the existing stack; never add an animation library.
+- **impeccable** — load for visual critique, refinement, polish or a design audit. Use the project-local `/impeccable` command and apply only the commands the task needs.
+- **web-design-guidelines** — load for the accessibility and usability audit before shipping substantial UI.
 - **writing-for-agents** — load when creating, editing or auditing AGENTS.md, agent definitions, skill definitions or other instructions agents read. Keep instructions minimal and point to detail rather than duplicating it.
 - **find-skills** — load when a task is large, unfamiliar or likely to recur, or before building custom tooling. Search `npx skills find` or skills.sh, prefer maintained sources, and report the best candidate and why it fits. Do not search for small, routine work. If nothing relevant exists, proceed with the approved stack and say so. Installing requires approval and is always project-local: run `npx skills add <package> -y` after approval, never with `-g`.
+
+### Frontend design workflow
+
+Use this workflow for substantial frontend design work: a new page or screen, a redesign, a design-system change or a visible interaction change. For minor work — copy edits, a single spacing or colour fix, or a bug fix that preserves the design — skip the full workflow but still inspect the rendered result when practical.
+
+1. **Direction.** Load `frontend-design` and state a short design plan (concept, type, palette, layout, motion, what to avoid) before writing code. Load `ui-ux-pro-max` when the task needs a design system, palette, type pairing or layout pattern. If the user supplies a reference, extract its visual principles and implement them faithfully; do not genericise it or copy proprietary assets.
+2. **Build.** Preserve the existing design system, tokens, components and plain-CSS stack. Load `emil-design-eng` for general animation and microinteraction decisions, and `apple-design` for Apple-style gesture and fluid-motion work. Motion must answer a user action or explain state; no decorative animation and no new animation library.
+3. **Inspect.** Use the project-local Playwright MCP tools to run the actual application. Inspect the DOM/accessibility snapshot, then capture desktop (about 1440×900) and mobile (about 390×844) screenshots. Read the screenshots themselves and check hierarchy, spacing, alignment, typography, contrast, overflow, density and interaction states.
+4. **Fix and repeat.** Correct real visual problems and capture again until both sizes hold. A successful build, typecheck or test run is not evidence that the interface looks right.
+5. **Critique and finish.** Load `impeccable` for critique, refinement, polish and design audits, and `web-design-guidelines` for the accessibility and usability pass. Re-check focus, empty, loading, error, long-content and reduced-motion states.
+
+Load only the skills the task needs. Do not load the whole design stack by default. If browser inspection or image analysis is unavailable, say so explicitly and list what was not verified.
+
+#### Design quality bar
+
+Avoid the generic AI-generated look: card-heavy layouts, rounded corners, gradients and shadows by default, decorative badges and icon tiles, a generic hero followed by feature-card sections, explanatory filler and purposeless motion.
+
+Prioritise intentional typography and hierarchy, deliberate composition and whitespace, a consistent spacing rhythm, a distinctive identity that fits the product, and polished interaction states. Match the product's domain rather than imposing a house style. Never invent metrics, testimonials or product claims to fill a layout. When references are needed, Mobbin, Refero, Land-book, Godly, Minimal Gallery and 21st.dev are acceptable sources for principles, not assets.
 
 ## 4. Definition of done
 
