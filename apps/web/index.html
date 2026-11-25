@@ -4,15 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f2f2ed" />
+    <meta name="color-scheme" content="light dark" />
     <meta
       name="description"
       content="One film for tonight, with three backups. Recommendations shaped by what you've rated — your library stays in this browser."
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
+    <script>
+      (function () {
+        try {
+          var stored = window.localStorage.getItem('movie-recommender-theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : typeof window.matchMedia === 'function' &&
+                  window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta !== null) {
+            meta.setAttribute('content', theme === 'dark' ? '#0d0f0c' : '#f2f2ed');
+          }
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
     <link
       rel="preload"
       href="/fonts/fraunces-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/schibsted-grotesk-latin.woff2"
       as="font"
       type="font/woff2"
       crossorigin

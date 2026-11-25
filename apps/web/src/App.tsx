@@ -11,6 +11,7 @@ import {
 import { Dashboard } from './Dashboard';
 import { Library } from './Library';
 import { convertListPaste } from './listPaste';
+import { ThemeToggle } from './ThemeToggle';
 import {
   createGuestProfile,
   type GuestProfile,
@@ -270,10 +271,13 @@ function Masthead({ view }: { view: View }) {
           </a>
         </nav>
 
-        <p className="masthead__status">
-          <span className="masthead__dot" aria-hidden="true" />
-          Local profile
-        </p>
+        <div className="masthead__tools">
+          <p className="masthead__status">
+            <span className="masthead__dot" aria-hidden="true" />
+            Local profile
+          </p>
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );
