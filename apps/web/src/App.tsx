@@ -229,18 +229,20 @@ function PosterPlaceholder({ title }: { title: string }) {
 
 function Masthead({ view }: { view: View }) {
   return (
-    <header className="masthead">
-      <h1>Movie recommender</h1>
-      <nav className="view-nav" aria-label="Views">
-        <a href="#picks" aria-current={view === 'picks' ? 'page' : undefined}>
-          Picks
-        </a>
-        <a href="#dashboard" aria-current={view === 'dashboard' ? 'page' : undefined}>
-          Dashboard
-        </a>
-      </nav>
+    <>
+      <header className="masthead">
+        <h1>Movie recommender</h1>
+        <nav className="view-nav" aria-label="Views">
+          <a href="#picks" aria-current={view === 'picks' ? 'page' : undefined}>
+            Picks
+          </a>
+          <a href="#dashboard" aria-current={view === 'dashboard' ? 'page' : undefined}>
+            Dashboard
+          </a>
+        </nav>
+      </header>
       <p className="tagline">One good pick, three alternatives, no endless scrolling.</p>
-    </header>
+    </>
   );
 }
 
