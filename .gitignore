@@ -11,3 +11,9 @@ coverage/
 
 .DS_Store
 *.log
+
+__pycache__/
+*.pyc
+
+.opencode/backups/
+.playwright-mcp/
