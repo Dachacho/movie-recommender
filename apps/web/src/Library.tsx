@@ -213,43 +213,47 @@ export function Library({ profile }: { profile: GuestProfile }) {
 
   return (
     <section className="library" aria-labelledby="library-heading">
-      <h2 className="library__heading" id="library-heading">
-        Your library
-      </h2>
-      <p className="library__intro">
-        Rate films you have seen to tune the picks. Watched films are left out of recommendations.
-      </p>
+      <div className="section-head">
+        <h2 className="library__heading" id="library-heading">
+          Your library
+        </h2>
+        <p className="library__intro">
+          Rate films you have seen to tune the picks. Watched films are left out of recommendations.
+        </p>
+      </div>
 
-      <LetterboxdImport
-        profile={profile}
-        onRatingImported={(movieId, rating) => {
-          setRatings((previous) => new Map(previous).set(movieId, rating));
-        }}
-        onWatchedImported={(movieId) => {
-          setWatchedIds((previous) => toggledIds(previous, movieId, true));
-        }}
-        onWatchlistImported={(movieId) => {
-          setWatchlistIds((previous) => toggledIds(previous, movieId, true));
-        }}
-      />
+      <div className="library__tools">
+        <form className="library__search" onSubmit={handleSearch}>
+          <label htmlFor="library-search">Find a film to rate</label>
+          <div className="library__search-controls">
+            <input
+              id="library-search"
+              type="search"
+              maxLength={80}
+              autoComplete="off"
+              placeholder="Search the catalog…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <button type="submit" disabled={search.status === 'pending'}>
+              {search.status === 'pending' ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+        </form>
 
-      <form className="library__search" onSubmit={handleSearch}>
-        <label htmlFor="library-search">Find a film to rate</label>
-        <div className="library__search-controls">
-          <input
-            id="library-search"
-            type="search"
-            maxLength={80}
-            autoComplete="off"
-            placeholder="Find a film to rate…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <button type="submit" disabled={search.status === 'pending'}>
-            {search.status === 'pending' ? 'Searching…' : 'Search'}
-          </button>
-        </div>
-      </form>
+        <LetterboxdImport
+          profile={profile}
+          onRatingImported={(movieId, rating) => {
+            setRatings((previous) => new Map(previous).set(movieId, rating));
+          }}
+          onWatchedImported={(movieId) => {
+            setWatchedIds((previous) => toggledIds(previous, movieId, true));
+          }}
+          onWatchlistImported={(movieId) => {
+            setWatchlistIds((previous) => toggledIds(previous, movieId, true));
+          }}
+        />
+      </div>
 
       {writeError !== null && <p className="status status--error">{writeError}</p>}
       {search.status === 'error' && <p className="status status--error">{search.message}</p>}
@@ -259,57 +263,64 @@ export function Library({ profile }: { profile: GuestProfile }) {
         (search.movies.length === 0 ? (
           <p className="status">No films matched that search.</p>
         ) : (
-          <ul className="library__results" aria-label="Search results">
-            {search.movies.map((movie) => {
-              const watched = watchedIds.has(movie.id);
-              const watchlisted = watchlistIds.has(movie.id);
+          <>
+            <p className="library__results-label">
+              {`${String(search.movies.length)} ${
+                search.movies.length === 1 ? 'film' : 'films'
+              } found`}
+            </p>
+            <ul className="library__results" aria-label="Search results">
+              {search.movies.map((movie) => {
+                const watched = watchedIds.has(movie.id);
+                const watchlisted = watchlistIds.has(movie.id);
 
-              return (
-                <li className="library__row" key={movie.id}>
-                  <div className="library__film">
-                    <h3 className="library__title">{movie.title}</h3>
-                    {movie.releaseYear !== null && (
-                      <p className="library__year">{movie.releaseYear}</p>
-                    )}
-                  </div>
-                  <div className="library__controls">
-                    <RatingControl
-                      movieId={movie.id}
-                      title={movie.title}
-                      rating={ratings.get(movie.id)}
-                      onSelect={(rating) => {
-                        void handleRate(movie.id, rating);
-                      }}
-                    />
-                    <div className="library__toggles">
-                      <button
-                        type="button"
-                        className="library__toggle"
-                        aria-pressed={watched}
-                        aria-label={`${movie.title}: watched`}
-                        onClick={() => {
-                          void handleWatchedToggle(movie.id);
-                        }}
-                      >
-                        Watched
-                      </button>
-                      <button
-                        type="button"
-                        className="library__toggle"
-                        aria-pressed={watchlisted}
-                        aria-label={`${movie.title}: watchlist`}
-                        onClick={() => {
-                          void handleWatchlistToggle(movie.id);
-                        }}
-                      >
-                        Watchlist
-                      </button>
+                return (
+                  <li className="library__row" key={movie.id}>
+                    <div className="library__film">
+                      <h3 className="library__title">{movie.title}</h3>
+                      {movie.releaseYear !== null && (
+                        <p className="library__year">{movie.releaseYear}</p>
+                      )}
                     </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                    <div className="library__controls">
+                      <RatingControl
+                        movieId={movie.id}
+                        title={movie.title}
+                        rating={ratings.get(movie.id)}
+                        onSelect={(rating) => {
+                          void handleRate(movie.id, rating);
+                        }}
+                      />
+                      <div className="library__toggles">
+                        <button
+                          type="button"
+                          className="library__toggle"
+                          aria-pressed={watched}
+                          aria-label={`${movie.title}: watched`}
+                          onClick={() => {
+                            void handleWatchedToggle(movie.id);
+                          }}
+                        >
+                          Watched
+                        </button>
+                        <button
+                          type="button"
+                          className="library__toggle"
+                          aria-pressed={watchlisted}
+                          aria-label={`${movie.title}: watchlist`}
+                          onClick={() => {
+                            void handleWatchlistToggle(movie.id);
+                          }}
+                        >
+                          Watchlist
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         ))}
     </section>
   );

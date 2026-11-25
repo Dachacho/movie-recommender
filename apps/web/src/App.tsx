@@ -93,11 +93,15 @@ const EMPTY_PASTE_MESSAGE = 'No films from that list are in the catalog yet.';
 const EMPTY_PASTE_INPUT_MESSAGE = 'Paste a list first — one film per line.';
 const PASTE_IMPORT_ERROR_MESSAGE = 'Could not match that list. Try again.';
 
-const SOURCE_OPTIONS: readonly { value: RecommendationSourceKind; label: string }[] = [
-  { value: 'catalog', label: 'The whole catalog' },
-  { value: 'watchlist', label: 'My watchlist' },
-  { value: 'rewatch', label: 'Rewatch shortlist' },
-  { value: 'paste', label: "A list I'll paste" },
+const SOURCE_OPTIONS: readonly {
+  value: RecommendationSourceKind;
+  label: string;
+  hint: string;
+}[] = [
+  { value: 'catalog', label: 'The whole catalog', hint: 'Everything in the catalog' },
+  { value: 'watchlist', label: 'My watchlist', hint: 'Films you saved' },
+  { value: 'rewatch', label: 'Rewatch shortlist', hint: 'Rated 4 stars or higher' },
+  { value: 'paste', label: "A list I'll paste", hint: 'Titles or Letterboxd CSV' },
 ];
 
 interface PasteReport {
@@ -229,9 +233,19 @@ function PosterPlaceholder({ title }: { title: string }) {
 
 function Masthead({ view }: { view: View }) {
   return (
-    <>
-      <header className="masthead">
-        <h1>Movie recommender</h1>
+    <header className="masthead">
+      <div className="masthead__inner">
+        <a className="brand" href="#picks">
+          <span className="brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <rect x="2.5" y="4" width="19" height="16" rx="2.5" stroke="currentColor" />
+              <path d="M7 4.5v15M17 4.5v15" stroke="currentColor" />
+              <circle cx="12" cy="12" r="3" stroke="currentColor" />
+            </svg>
+          </span>
+          <h1>Movie recommender</h1>
+        </a>
+
         <nav className="view-nav" aria-label="Views">
           <a href="#picks" aria-current={view === 'picks' ? 'page' : undefined}>
             Picks
@@ -240,9 +254,46 @@ function Masthead({ view }: { view: View }) {
             Dashboard
           </a>
         </nav>
-      </header>
-      <p className="tagline">One good pick, three alternatives, no endless scrolling.</p>
-    </>
+
+        <p className="masthead__status">
+          <span className="masthead__dot" aria-hidden="true" />
+          Local profile
+        </p>
+      </div>
+    </header>
+  );
+}
+
+function Hero() {
+  return (
+    <section className="hero" aria-labelledby="hero-line">
+      <h2 className="hero__line" id="hero-line">
+        One film for tonight.
+      </h2>
+      <p className="hero__lede">
+        Tell us the mood, or leave it blank. We'll choose one film and three backups from what
+        you've rated and what you feel like watching.
+      </p>
+      <ul className="hero__notes">
+        <li>No account needed</li>
+        <li>Your library stays local</li>
+        <li>Letterboxd-ready</li>
+      </ul>
+      <dl className="hero__principles">
+        <div>
+          <dt>Source</dt>
+          <dd>The whole catalog, your watchlist, or a list you bring.</dd>
+        </div>
+        <div>
+          <dt>Taste</dt>
+          <dd>Your ratings, kept in this browser and never on a server.</dd>
+        </div>
+        <div>
+          <dt>Result</dt>
+          <dd>One film and three backups. Rejects rest for seven days.</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -303,7 +354,9 @@ function MainPick({ movie, disabled, pending, onReject }: MainPickProps) {
 
   return (
     <article className="main-pick" aria-label="Main pick">
-      <MoviePoster movie={movie} priority />
+      <div className="main-pick__frame">
+        <MoviePoster movie={movie} priority />
+      </div>
       <div className="main-pick__body">
         <h2 className="main-pick__title">{movie.title}</h2>
         {facts.length > 0 && <p className="main-pick__meta">{facts.join('. ')}</p>}
@@ -340,25 +393,32 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 
   return (
     <section className="alternatives">
-      <h2 className="alternatives__heading">Also worth a look</h2>
+      <div className="alternatives__head">
+        <h2 className="alternatives__heading">If that's not it</h2>
+        <p className="alternatives__hint">Three more, chosen to sit apart from the main pick.</p>
+      </div>
       <ul className="alternatives__list" aria-label="Alternatives">
         {movies.map((movie, offset) => {
           const index = startIndex + offset;
 
           return (
             <li key={movie.id} className="alternative">
-              <MoviePoster movie={movie} />
-              <h3 className="alternative__title">{movie.title}</h3>
-              {movie.releaseYear !== null && (
-                <p className="alternative__year">{movie.releaseYear}</p>
-              )}
-              <div className="alternative__actions">
-                <RejectButton
-                  title={movie.title}
-                  disabled={disabled}
-                  pending={pendingIndex === index}
-                  onReject={() => onReject(index)}
-                />
+              <div className="alternative__frame">
+                <MoviePoster movie={movie} />
+              </div>
+              <div className="alternative__body">
+                <h3 className="alternative__title">{movie.title}</h3>
+                {movie.releaseYear !== null && (
+                  <p className="alternative__year">{movie.releaseYear}</p>
+                )}
+                <div className="alternative__actions">
+                  <RejectButton
+                    title={movie.title}
+                    disabled={disabled}
+                    pending={pendingIndex === index}
+                    onReject={() => onReject(index)}
+                  />
+                </div>
               </div>
             </li>
           );
@@ -694,212 +754,271 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   const pendingReplaceIndex =
     action.status === 'pending' && action.kind === 'replace' ? action.index : null;
 
+  const hasResults = state.status === 'results';
+  const roundSourceLabel =
+    state.status === 'results'
+      ? {
+          catalog: 'the whole catalog',
+          watchlist: 'your watchlist',
+          rewatch: 'your rewatch shortlist',
+          paste: 'your pasted list',
+        }[state.round.intent.source]
+      : 'the whole catalog';
+
   if (view === 'dashboard') {
     return (
-      <main className="page">
+      <div className="shell">
         <Masthead view={view} />
-        <Dashboard profile={profile} />
-      </main>
+        <main className="page page--dashboard">
+          <Dashboard profile={profile} />
+        </main>
+      </div>
     );
   }
 
   return (
-    <main className="page">
+    <div className="shell">
       <Masthead view={view} />
 
-      <form className="prompt-form" onSubmit={handleSubmit}>
-        <fieldset className="source-picker">
-          <legend>Recommend from</legend>
-          <div className="source-picker__options">
-            {SOURCE_OPTIONS.map((option) => (
-              <label className="source-picker__option" key={option.value}>
-                <input
-                  type="radio"
-                  name="recommendation-source"
-                  value={option.value}
-                  checked={sourceKind === option.value}
-                  onChange={() => handleSourceChange(option.value)}
-                />
-                {option.label}
-              </label>
-            ))}
-            <label className="source-picker__option source-picker__option--toggle">
-              <input
-                type="checkbox"
-                checked={surpriseMe}
-                disabled={controlsDisabled}
-                onChange={(event) => setSurpriseMe(event.target.checked)}
-              />
-              Surprise me
-            </label>
+      <main className={`page${hasResults ? ' page--results' : ''}`}>
+        {!hasResults && <Hero />}
+
+        <form
+          className={`prompt-form${hasResults ? ' prompt-form--compact' : ''}`}
+          onSubmit={handleSubmit}
+        >
+          <div className="prompt-form__head">
+            <h2 className="prompt-form__title">Set the brief</h2>
+            <p className="prompt-form__hint">A source, a mood, and that's it.</p>
           </div>
-        </fieldset>
 
-        {sourceKind === 'paste' && (
-          <section className="list-paste" aria-label="Pasted list">
-            <label htmlFor="list-paste">Paste a list — one film per line</label>
-            <textarea
-              id="list-paste"
-              rows={6}
-              value={pastedList}
-              placeholder={'Heat (1995)\nIn the Mood for Love\nAlien, 1979'}
-              onChange={(event) => setPastedList(event.target.value)}
-            />
-            <div className="list-paste__actions">
-              <button
-                type="button"
-                disabled={controlsDisabled}
-                onClick={() => {
-                  void submitRound();
-                }}
-              >
-                Use this list
-              </button>
-              <p className="list-paste__hint">
-                One film per line, or paste Letterboxd CSV rows. Ratings are ignored for this
-                source.
-              </p>
+          <fieldset className="source-picker">
+            <legend>Recommend from</legend>
+            <div className="source-picker__options">
+              {SOURCE_OPTIONS.map((option) => (
+                <label className="source-picker__option" key={option.value}>
+                  <input
+                    type="radio"
+                    name="recommendation-source"
+                    value={option.value}
+                    checked={sourceKind === option.value}
+                    onChange={() => handleSourceChange(option.value)}
+                  />
+                  <span className="source-picker__copy">
+                    <span className="source-picker__label">{option.label}</span>
+                    <span className="source-picker__hint" aria-hidden="true">
+                      {option.hint}
+                    </span>
+                  </span>
+                </label>
+              ))}
             </div>
+          </fieldset>
 
-            {pasteError !== null && <p className="status status--error">{pasteError}</p>}
+          <label className="switch-row">
+            <input
+              type="checkbox"
+              checked={surpriseMe}
+              disabled={controlsDisabled}
+              onChange={(event) => setSurpriseMe(event.target.checked)}
+            />
+            <span className="switch-row__control" aria-hidden="true">
+              <span className="switch-row__knob" />
+            </span>
+            <span className="switch-row__copy">
+              <span className="switch-row__label">Surprise me</span>
+              <span className="switch-row__hint" aria-hidden="true">
+                Reach past your usual taste
+              </span>
+            </span>
+          </label>
 
-            {pasteReport !== null && (
-              <div className="import__report">
-                {pasteReport.matched > 0 && (
-                  <p className="status import__status">
-                    {`Matched ${String(pasteReport.matched)} of ${String(
-                      pasteReport.matched + pasteReport.unmatched.length,
-                    )} ${
-                      pasteReport.matched + pasteReport.unmatched.length === 1 ? 'film' : 'films'
-                    } from your list.`}
-                  </p>
-                )}
-
-                {pasteReport.unmatched.length > 0 && (
-                  <details className="import__unmatched">
-                    <summary>
-                      Not in the catalog:{' '}
-                      {pasteReport.unmatched.length === 1
-                        ? '1 film'
-                        : `${String(pasteReport.unmatched.length)} films`}
-                    </summary>
-                    <ul className="import__list">
-                      {pasteReport.unmatched.map((unmatched) => (
-                        <li key={`${unmatched.name}\u0000${String(unmatched.year ?? '')}`}>
-                          {unmatched.year === null
-                            ? unmatched.name
-                            : `${unmatched.name} (${String(unmatched.year)})`}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-
-                {pasteReport.unparseable.length > 0 && (
-                  <details className="import__unmatched">
-                    <summary>
-                      Could not read:{' '}
-                      {pasteReport.unparseable.length === 1
-                        ? '1 line'
-                        : `${String(pasteReport.unparseable.length)} lines`}
-                    </summary>
-                    <ul className="import__list">
-                      {pasteReport.unparseable.map((line, index) => (
-                        <li key={`${String(index)}:${line}`}>{line}</li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </div>
-            )}
-          </section>
-        )}
-
-        <label htmlFor="prompt">What are you in the mood for?</label>
-        <div className="prompt-form__controls">
-          <input
-            id="prompt"
-            type="text"
-            maxLength={300}
-            autoComplete="off"
-            placeholder="A quiet thriller, something funny…"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-          <button type="submit" disabled={controlsDisabled}>
-            {pending ? 'Finding a movie…' : 'Find my movie'}
-          </button>
-        </div>
-      </form>
-
-      <section className="results" aria-live="polite" aria-busy={controlsDisabled}>
-        {pending && <p className="status">Finding something worth watching…</p>}
-
-        {state.status === 'error' && <p className="status status--error">{state.message}</p>}
-
-        {state.status === 'empty-pool' && <p className="status">{state.message}</p>}
-
-        {action.status === 'pending' && (
-          <p className="status">
-            {action.kind === 'refresh' ? 'Refreshing all picks…' : 'Finding another movie…'}
-          </p>
-        )}
-
-        {state.status === 'results' &&
-          (state.round.movies.length === 0 ? (
-            <p className="status">No picks tonight. Try a different direction.</p>
-          ) : (
-            <div className="pick-round">
-              <div className="pick-round__toolbar">
+          {sourceKind === 'paste' && (
+            <section className="list-paste" aria-label="Pasted list">
+              <label htmlFor="list-paste">Paste a list — one film per line</label>
+              <textarea
+                id="list-paste"
+                rows={6}
+                value={pastedList}
+                placeholder={'Heat (1995)\nIn the Mood for Love\nAlien, 1979'}
+                onChange={(event) => setPastedList(event.target.value)}
+              />
+              <div className="list-paste__actions">
                 <button
                   type="button"
-                  className="pick-action"
                   disabled={controlsDisabled}
                   onClick={() => {
-                    void handleRefreshAll();
+                    void submitRound();
                   }}
                 >
-                  {action.status === 'pending' && action.kind === 'refresh'
-                    ? 'Refreshing…'
-                    : 'Refresh all'}
+                  Use this list
                 </button>
+                <p className="list-paste__hint">
+                  One film per line, or paste Letterboxd CSV rows. Ratings are ignored for this
+                  source.
+                </p>
+              </div>
+
+              {pasteError !== null && <p className="status status--error">{pasteError}</p>}
+
+              {pasteReport !== null && (
+                <div className="import__report">
+                  {pasteReport.matched > 0 && (
+                    <p className="status import__status">
+                      {`Matched ${String(pasteReport.matched)} of ${String(
+                        pasteReport.matched + pasteReport.unmatched.length,
+                      )} ${
+                        pasteReport.matched + pasteReport.unmatched.length === 1 ? 'film' : 'films'
+                      } from your list.`}
+                    </p>
+                  )}
+
+                  {pasteReport.unmatched.length > 0 && (
+                    <details className="import__unmatched">
+                      <summary>
+                        Not in the catalog:{' '}
+                        {pasteReport.unmatched.length === 1
+                          ? '1 film'
+                          : `${String(pasteReport.unmatched.length)} films`}
+                      </summary>
+                      <ul className="import__list">
+                        {pasteReport.unmatched.map((unmatched) => (
+                          <li key={`${unmatched.name}\u0000${String(unmatched.year ?? '')}`}>
+                            {unmatched.year === null
+                              ? unmatched.name
+                              : `${unmatched.name} (${String(unmatched.year)})`}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  {pasteReport.unparseable.length > 0 && (
+                    <details className="import__unmatched">
+                      <summary>
+                        Could not read:{' '}
+                        {pasteReport.unparseable.length === 1
+                          ? '1 line'
+                          : `${String(pasteReport.unparseable.length)} lines`}
+                      </summary>
+                      <ul className="import__list">
+                        {pasteReport.unparseable.map((line, index) => (
+                          <li key={`${String(index)}:${line}`}>{line}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          <div className="prompt-form__field">
+            <div className="prompt-form__field-head">
+              <label htmlFor="prompt">What are you in the mood for?</label>
+              <span className="prompt-form__optional" aria-hidden="true">
+                Optional
+              </span>
+            </div>
+            <div className="prompt-form__controls">
+              <input
+                id="prompt"
+                type="text"
+                maxLength={300}
+                autoComplete="off"
+                placeholder="A quiet thriller, something funny…"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+              <button type="submit" disabled={controlsDisabled}>
+                {pending ? 'Finding a movie…' : 'Find my movie'}
+              </button>
+            </div>
+          </div>
+
+          <p className="prompt-form__note">Your ratings and history stay in this browser.</p>
+        </form>
+
+        <section className="results" aria-live="polite" aria-busy={controlsDisabled}>
+          {pending && <p className="status status--pending">Finding something worth watching…</p>}
+
+          {state.status === 'error' && <p className="status status--error">{state.message}</p>}
+
+          {state.status === 'empty-pool' && <p className="status">{state.message}</p>}
+
+          {action.status === 'pending' && (
+            <p className="status status--pending">
+              {action.kind === 'refresh' ? 'Refreshing all picks…' : 'Finding another movie…'}
+            </p>
+          )}
+
+          {state.status === 'results' &&
+            (state.round.movies.length === 0 ? (
+              <p className="status">No picks tonight. Try a different direction.</p>
+            ) : (
+              <div className="pick-round">
+                <div className="pick-round__toolbar">
+                  <div className="pick-round__heading">
+                    <h2 className="pick-round__title">Tonight's picks</h2>
+                    <p className="pick-round__meta">
+                      {`${String(state.round.movies.length)} ${
+                        state.round.movies.length === 1 ? 'film' : 'films'
+                      } from ${roundSourceLabel}`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="pick-action pick-action--quiet"
+                    disabled={controlsDisabled}
+                    onClick={() => {
+                      void handleRefreshAll();
+                    }}
+                  >
+                    {action.status === 'pending' && action.kind === 'refresh'
+                      ? 'Refreshing…'
+                      : 'Refresh all'}
+                  </button>
+                </div>
+
                 {action.status === 'error' && (
                   <p className="status status--error">{action.message}</p>
                 )}
-              </div>
 
-              <div className="picks" key={state.round.requestId}>
-                {state.round.movies[0] !== undefined && (
-                  <MainPick
-                    movie={state.round.movies[0]}
+                <div className="picks" key={state.round.requestId}>
+                  {state.round.movies[0] !== undefined && (
+                    <MainPick
+                      movie={state.round.movies[0]}
+                      disabled={controlsDisabled}
+                      pending={pendingReplaceIndex === 0}
+                      onReject={() => {
+                        void handleReplace(0);
+                      }}
+                    />
+                  )}
+                  <Alternatives
+                    movies={state.round.movies.slice(1, 4)}
+                    startIndex={1}
                     disabled={controlsDisabled}
-                    pending={pendingReplaceIndex === 0}
-                    onReject={() => {
-                      void handleReplace(0);
+                    pendingIndex={pendingReplaceIndex}
+                    onReject={(index) => {
+                      void handleReplace(index);
                     }}
                   />
-                )}
-                <Alternatives
-                  movies={state.round.movies.slice(1, 4)}
-                  startIndex={1}
-                  disabled={controlsDisabled}
-                  pendingIndex={pendingReplaceIndex}
-                  onReject={(index) => {
-                    void handleReplace(index);
-                  }}
-                />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
 
-        {state.status === 'results' && exclusionTrimmed && (
-          <p className="status">{EXCLUSION_TRIM_NOTICE}</p>
-        )}
+          {state.status === 'results' && exclusionTrimmed && (
+            <p className="status">{EXCLUSION_TRIM_NOTICE}</p>
+          )}
 
-        {state.status === 'results' && poolTrimmed && <p className="status">{POOL_TRIM_NOTICE}</p>}
-      </section>
+          {state.status === 'results' && poolTrimmed && (
+            <p className="status">{POOL_TRIM_NOTICE}</p>
+          )}
+        </section>
 
-      <Library profile={profile} />
-    </main>
+        <Library profile={profile} />
+      </main>
+    </div>
   );
 }

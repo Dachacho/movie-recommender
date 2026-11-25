@@ -368,61 +368,72 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
       <h2 className="dashboard__heading" id="dashboard-heading">
         Your dashboard
       </h2>
+      <p className="dashboard__lede">The record of what you've rated, saved and asked for.</p>
 
       {loadFailed && <p className="status status--error">{LOAD_ERROR_MESSAGE}</p>}
 
       {data !== null && (
         <>
-          <ul className="dashboard__counts">
-            <li className="dashboard__count">
-              <span className="dashboard__count-value">{String(ratedFilms.length)}</span> rated
-            </li>
-            <li className="dashboard__count">
-              <span className="dashboard__count-value">{String(data.watchedCount)}</span> watched
-            </li>
-            <li className="dashboard__count">
-              <span className="dashboard__count-value">{String(data.watchlistIds.length)}</span>{' '}
-              watchlisted
-            </li>
-            <li className="dashboard__count">
-              <span className="dashboard__count-value">{String(data.cooldownCount)}</span> cooling
-              down
-            </li>
-          </ul>
-
-          <p className="dashboard__summary">
-            {mean === null ? (
-              'No ratings yet'
-            ) : (
-              <>
-                Mean rating <span className="dashboard__mean">{mean.toFixed(1)}</span>
-              </>
-            )}
-            {', '}
-            {activityLabel(activity.rounds, activity.replacements)}
-          </p>
-
-          <section className="dashboard__panel" aria-labelledby="dashboard-histogram-heading">
-            <h3 className="dashboard__section-heading" id="dashboard-histogram-heading">
-              Rating spread
-            </h3>
-            <ul className="dashboard__histogram">
-              {histogram.map((bucket) => (
-                <li className="dashboard__histogram-row" key={bucket.rating}>
-                  <span className="dashboard__histogram-label">
-                    {`${ratingLabel(bucket.rating)}: `}
-                  </span>
-                  <span className="dashboard__histogram-track" aria-hidden="true">
-                    <span
-                      className="dashboard__histogram-bar"
-                      style={{ width: histogramBarWidth(bucket.count, maxCount) }}
-                    />
-                  </span>
-                  <span className="dashboard__histogram-count">{countLabel(bucket.count)}</span>
-                </li>
-              ))}
+          <div className="dashboard__overview">
+            <ul className="dashboard__counts">
+              <li className="dashboard__count">
+                <span className="dashboard__count-value">{String(ratedFilms.length)}</span> rated
+              </li>
+              <li className="dashboard__count">
+                <span className="dashboard__count-value">{String(data.watchedCount)}</span> watched
+              </li>
+              <li className="dashboard__count">
+                <span className="dashboard__count-value">{String(data.watchlistIds.length)}</span>{' '}
+                watchlisted
+              </li>
+              <li className="dashboard__count">
+                <span className="dashboard__count-value">{String(data.cooldownCount)}</span> cooling
+                down
+              </li>
             </ul>
-          </section>
+
+            <p className="dashboard__summary">
+              {mean === null ? (
+                'No ratings yet'
+              ) : (
+                <>
+                  Mean rating <span className="dashboard__mean">{mean.toFixed(1)}</span>
+                </>
+              )}
+              {', '}
+              {activityLabel(activity.rounds, activity.replacements)}
+            </p>
+          </div>
+
+          {ratedFilms.length > 0 && (
+            <section className="dashboard__panel" aria-labelledby="dashboard-histogram-heading">
+              <h3 className="dashboard__section-heading" id="dashboard-histogram-heading">
+                Rating spread
+              </h3>
+              <ul className="dashboard__histogram">
+                {histogram.map((bucket) => (
+                  <li className="dashboard__histogram-row" key={bucket.rating}>
+                    <span className="dashboard__histogram-label">
+                      {`${ratingLabel(bucket.rating)}: `}
+                    </span>
+                    <span className="dashboard__histogram-track" aria-hidden="true">
+                      <span
+                        className="dashboard__histogram-bar"
+                        style={{ width: histogramBarWidth(bucket.count, maxCount) }}
+                      />
+                    </span>
+                    <span
+                      className={`dashboard__histogram-count${
+                        bucket.count === 0 ? ' dashboard__histogram-count--zero' : ''
+                      }`}
+                    >
+                      {countLabel(bucket.count)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <div className="dashboard__columns">
             <section className="dashboard__panel" aria-labelledby="dashboard-ratings-heading">
@@ -521,19 +532,14 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
 
                   return (
                     <li className="dashboard__history-entry" key={entry.id}>
-                      <p className="dashboard__history-meta">
+                      <div className="dashboard__history-meta">
                         <span>{formatTimestamp(entry.createdAt)}</span>
-                        <span aria-hidden="true"> · </span>
                         <span>{SOURCE_LABELS[entry.source]}</span>
-                        {entry.prompt !== '' && (
-                          <>
-                            <span aria-hidden="true"> · </span>
-                            <span>{`"${entry.prompt}"`}</span>
-                          </>
-                        )}
-                        <span aria-hidden="true"> · </span>
-                        <span>{KIND_LABELS[entry.kind]}</span>
-                      </p>
+                        <span className="dashboard__history-kind">{KIND_LABELS[entry.kind]}</span>
+                      </div>
+                      {entry.prompt !== '' && (
+                        <p className="dashboard__history-prompt">{`"${entry.prompt}"`}</p>
+                      )}
                       {replaced !== null && (
                         <p className="dashboard__history-replaced">{replaced}</p>
                       )}
