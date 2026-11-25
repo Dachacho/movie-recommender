@@ -17,6 +17,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.history.replaceState(null, '', '/');
 });
 
 const ARRIVAL: MovieCard = {
@@ -187,6 +188,17 @@ function importResponse(
 }
 
 function renderApp(profile: GuestProfile = createProfile()): ReturnType<typeof render> {
+  return render(<App profile={profile} />);
+}
+
+function navigateTo(view: 'picks' | 'library' | 'dashboard'): void {
+  window.history.replaceState(null, '', `#${view}`);
+  fireEvent(window, new Event('hashchange'));
+}
+
+function renderLibraryApp(profile: GuestProfile = createProfile()): ReturnType<typeof render> {
+  window.history.replaceState(null, '', '#library');
+
   return render(<App profile={profile} />);
 }
 
@@ -768,7 +780,7 @@ describe('App', () => {
     const fetchMock = stubFetch();
     fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
 
-    renderApp();
+    renderLibraryApp();
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -785,7 +797,7 @@ describe('App', () => {
   it('does not send a library search shorter than two characters', async () => {
     const fetchMock = stubFetch();
 
-    renderApp();
+    renderLibraryApp();
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'a' },
     });
@@ -803,7 +815,7 @@ describe('App', () => {
       jsonResponse({ error: { code: 'invalid_request', message: 'Search is unavailable.' } }, 400),
     );
 
-    renderApp();
+    renderLibraryApp();
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -828,7 +840,7 @@ describe('App', () => {
         : recommendationResponse(),
     );
 
-    renderApp(profile);
+    renderLibraryApp(profile);
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -859,7 +871,7 @@ describe('App', () => {
         : recommendationResponse(),
     );
 
-    renderApp(profile);
+    renderLibraryApp(profile);
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -910,6 +922,7 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await screen.findByRole('button', { name: 'Find my movie' });
 
+    navigateTo('library');
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -920,6 +933,7 @@ describe('App', () => {
     fireEvent.click(threeStars);
     await waitFor(() => expect((threeStars as HTMLInputElement).checked).toBe(true));
 
+    navigateTo('picks');
     fireEvent.click(screen.getByRole('button', { name: 'Find my movie' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
 
@@ -941,7 +955,7 @@ describe('App', () => {
     fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
     vi.spyOn(profile, 'getRatings').mockRejectedValue(new Error('IndexedDB unavailable'));
 
-    renderApp(profile);
+    renderLibraryApp(profile);
 
     expect(await screen.findByText('Could not load your library. Try again.')).toBeTruthy();
 
@@ -961,7 +975,7 @@ describe('App', () => {
     await profile.setRating(3, 4);
     fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
 
-    renderApp(profile);
+    renderLibraryApp(profile);
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -989,7 +1003,7 @@ describe('App', () => {
     fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
     vi.spyOn(profile, 'setWatched').mockRejectedValue(new Error('Quota exceeded'));
 
-    renderApp(profile);
+    renderLibraryApp(profile);
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -1012,7 +1026,7 @@ describe('App', () => {
     fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
     vi.spyOn(profile, 'addToWatchlist').mockRejectedValue(new Error('Quota exceeded'));
 
-    renderApp(profile);
+    renderLibraryApp(profile);
     fireEvent.change(screen.getByLabelText('Find a film to rate'), {
       target: { value: 'heat' },
     });
@@ -1747,39 +1761,58 @@ describe('App', () => {
 });
 
 describe('view navigation', () => {
-  afterEach(() => {
-    window.history.replaceState(null, '', '/');
-  });
-
   it('defaults to the picks view and follows hash changes between views', async () => {
     const fetchMock = stubFetch();
 
     render(<App profile={createProfile()} />);
 
     expect(getPromptInput()).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Your library' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Your library' })).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
     expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBeNull();
     expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBeNull();
 
-    window.history.replaceState(null, '', '#dashboard');
-    fireEvent(window, new Event('hashchange'));
+    navigateTo('library');
+
+    expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
+    expect(screen.getByLabelText('Find a film to rate')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBeNull();
+    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Find my movie' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Your dashboard' })).toBeNull();
+
+    navigateTo('dashboard');
 
     expect(await screen.findByRole('heading', { name: 'Your dashboard' })).toBeTruthy();
     expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Find my movie' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Your library' })).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
     expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe(
       'page',
     );
     expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBeNull();
 
-    window.history.replaceState(null, '', '#picks');
-    fireEvent(window, new Event('hashchange'));
+    navigateTo('picks');
 
     expect(await screen.findByLabelText('What are you in the mood for?')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Your dashboard' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Your library' })).toBeNull();
+    expect(screen.queryByLabelText('Find a film to rate')).toBeNull();
     expect(screen.getByRole('link', { name: 'Picks' }).getAttribute('aria-current')).toBe('page');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the library when the app loads with a library hash', async () => {
+    window.history.replaceState(null, '', '#library');
+
+    render(<App profile={createProfile()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
+    expect(screen.queryByLabelText('What are you in the mood for?')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('opens the dashboard when the app loads with a dashboard hash', async () => {

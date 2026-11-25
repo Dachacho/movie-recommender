@@ -518,6 +518,28 @@ describe('Letterboxd import', () => {
     );
   });
 
+  it('clears a rating from its search row', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(HEAT.id, 4);
+    fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+
+    renderLibrary(profile);
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const clearRating = await screen.findByRole('button', { name: 'Clear rating for Heat' });
+    fireEvent.click(clearRating);
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Clear rating for Heat' })).toBeNull(),
+    );
+    await expect(profile.getRatings()).resolves.toEqual([]);
+  });
+
   it('does not start a second import while one is pending', async () => {
     const fetchMock = stubFetch();
     fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
@@ -533,5 +555,53 @@ describe('Letterboxd import', () => {
 
     fireEvent.change(input, { target: { files: [fileWithText('second')] } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Library idle state', () => {
+  const IDLE_COPY = 'Search the catalog to rate a film, mark it watched, or save it for later.';
+
+  it('introduces the search with local totals and a dashboard link', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    await profile.setRating(3, 4.5);
+    await profile.setRating(1, 4);
+    await profile.setWatched(3);
+    await profile.addToWatchlist(3);
+    await profile.addToWatchlist(1);
+    await profile.addToWatchlist(2);
+
+    renderLibrary(profile);
+
+    expect(screen.getByText(IDLE_COPY)).toBeTruthy();
+
+    const totals = screen.getByRole('list', { name: 'Library totals' });
+
+    await waitFor(() =>
+      expect(
+        Array.from(totals.querySelectorAll('.library__idle-count')).map((item) => item.textContent),
+      ).toEqual(['2 rated', '1 watched', '3 watchlisted']),
+    );
+
+    const link = screen.getByRole('link', { name: 'See your rating spread' });
+    expect(link.getAttribute('href')).toBe('#dashboard');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('hides the idle guidance as soon as a search starts', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
+
+    renderLibrary();
+    expect(screen.getByText(IDLE_COPY)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(screen.queryByText(IDLE_COPY)).toBeNull();
+    expect(screen.getByText('Searching the catalog…')).toBeTruthy();
   });
 });

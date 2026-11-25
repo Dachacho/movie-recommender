@@ -50,6 +50,9 @@ const DATA_ACTION_ERROR_MESSAGES: Record<DataAction, string> = {
 /** The ledger shows the newest rounds; stats still read everything retained. */
 const RECENT_HISTORY_LIMIT = 10;
 
+/** Dashboard panels preview a handful; the library owns the full profile. */
+const PREVIEW_COUNT = 5;
+
 const EMPTY_RATINGS_MESSAGE = 'No ratings yet. Rate a film in your library to tune the picks.';
 const EMPTY_WATCHLIST_MESSAGE = 'Nothing on your watchlist yet.';
 const EMPTY_HISTORY_MESSAGE = 'No picks yet. Your recommendation rounds will appear here.';
@@ -223,7 +226,12 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
       });
       setLoadFailed(false);
 
-      const ids = [...ratings.map((record) => record.movieId), ...watchlistIds];
+      const ids = [
+        ...ratedFilmsByRecency(ratings)
+          .slice(0, PREVIEW_COUNT)
+          .map((record) => record.movieId),
+        ...watchlistIds.slice(0, PREVIEW_COUNT),
+      ];
 
       try {
         const resolved = await movieLookup.resolveMany(ids);
@@ -448,34 +456,43 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               {ratedFilms.length === 0 ? (
                 <p className="dashboard__empty">{EMPTY_RATINGS_MESSAGE}</p>
               ) : (
-                <ul className="dashboard__rows">
-                  {ratedFilms.map((record) => {
-                    const title = titleFor(record.movieId);
-                    const year = yearFor(record.movieId);
+                <>
+                  <ul className="dashboard__rows">
+                    {ratedFilms.slice(0, PREVIEW_COUNT).map((record) => {
+                      const title = titleFor(record.movieId);
+                      const year = yearFor(record.movieId);
 
-                    return (
-                      <li className="dashboard__row" key={record.movieId}>
-                        <span className="dashboard__row-film">
-                          <span className="dashboard__row-title">{title}</span>
-                          {year !== null && <span className="dashboard__row-year">{year}</span>}
-                        </span>
-                        <span className="dashboard__row-rating">
-                          {`${formatRating(record.rating)} / 5`}
-                        </span>
-                        <button
-                          type="button"
-                          className="dashboard__remove"
-                          aria-label={`Remove rating for ${title}`}
-                          onClick={() => {
-                            void removeRating(record.movieId);
-                          }}
-                        >
-                          ×
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                      return (
+                        <li className="dashboard__row" key={record.movieId}>
+                          <span className="dashboard__row-film">
+                            <span className="dashboard__row-title">{title}</span>
+                            {year !== null && <span className="dashboard__row-year">{year}</span>}
+                          </span>
+                          <span className="dashboard__row-rating">
+                            {`${formatRating(record.rating)} / 5`}
+                          </span>
+                          <button
+                            type="button"
+                            className="dashboard__remove"
+                            aria-label={`Remove rating for ${title}`}
+                            onClick={() => {
+                              void removeRating(record.movieId);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {ratedFilms.length > PREVIEW_COUNT && (
+                    <p className="dashboard__more">
+                      {`Showing ${String(PREVIEW_COUNT)} of ${String(ratedFilms.length)}. `}
+                      <a href="#library">Find any film in the library.</a>
+                    </p>
+                  )}
+                </>
               )}
             </section>
 
@@ -489,31 +506,40 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               {data.watchlistIds.length === 0 ? (
                 <p className="dashboard__empty">{EMPTY_WATCHLIST_MESSAGE}</p>
               ) : (
-                <ul className="dashboard__rows">
-                  {data.watchlistIds.map((movieId) => {
-                    const title = titleFor(movieId);
-                    const year = yearFor(movieId);
+                <>
+                  <ul className="dashboard__rows">
+                    {data.watchlistIds.slice(0, PREVIEW_COUNT).map((movieId) => {
+                      const title = titleFor(movieId);
+                      const year = yearFor(movieId);
 
-                    return (
-                      <li className="dashboard__row" key={movieId}>
-                        <span className="dashboard__row-film">
-                          <span className="dashboard__row-title">{title}</span>
-                          {year !== null && <span className="dashboard__row-year">{year}</span>}
-                        </span>
-                        <button
-                          type="button"
-                          className="dashboard__remove"
-                          aria-label={`Remove ${title} from watchlist`}
-                          onClick={() => {
-                            void removeFromWatchlist(movieId);
-                          }}
-                        >
-                          ×
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                      return (
+                        <li className="dashboard__row" key={movieId}>
+                          <span className="dashboard__row-film">
+                            <span className="dashboard__row-title">{title}</span>
+                            {year !== null && <span className="dashboard__row-year">{year}</span>}
+                          </span>
+                          <button
+                            type="button"
+                            className="dashboard__remove"
+                            aria-label={`Remove ${title} from watchlist`}
+                            onClick={() => {
+                              void removeFromWatchlist(movieId);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {data.watchlistIds.length > PREVIEW_COUNT && (
+                    <p className="dashboard__more">
+                      {`Showing ${String(PREVIEW_COUNT)} of ${String(data.watchlistIds.length)}. `}
+                      <a href="#library">Manage your watchlist in the library.</a>
+                    </p>
+                  )}
+                </>
               )}
             </section>
           </div>

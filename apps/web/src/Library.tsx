@@ -175,6 +175,23 @@ export function Library({ profile }: { profile: GuestProfile }) {
     }
   }
 
+  async function handleClearRating(movieId: number) {
+    setWriteError(null);
+
+    try {
+      await profile.removeRating(movieId);
+      setRatings((previous) => {
+        const next = new Map(previous);
+
+        next.delete(movieId);
+
+        return next;
+      });
+    } catch {
+      setWriteError(WRITE_ERROR_MESSAGE);
+    }
+  }
+
   async function handleWatchedToggle(movieId: number) {
     const watched = watchedIds.has(movieId);
 
@@ -256,6 +273,29 @@ export function Library({ profile }: { profile: GuestProfile }) {
         />
       </div>
 
+      {search.status === 'idle' && (
+        <div className="library__idle">
+          <p className="library__idle-copy">
+            Search the catalog to rate a film, mark it watched, or save it for later.
+          </p>
+          <ul className="library__idle-counts" aria-label="Library totals">
+            <li className="library__idle-count">
+              <span className="library__idle-count-value">{String(ratings.size)}</span> rated
+            </li>
+            <li className="library__idle-count">
+              <span className="library__idle-count-value">{String(watchedIds.size)}</span> watched
+            </li>
+            <li className="library__idle-count">
+              <span className="library__idle-count-value">{String(watchlistIds.size)}</span>{' '}
+              watchlisted
+            </li>
+          </ul>
+          <a className="library__idle-link" href="#dashboard">
+            See your rating spread
+          </a>
+        </div>
+      )}
+
       {writeError !== null && <p className="status status--error">{writeError}</p>}
       {search.status === 'error' && <p className="status status--error">{search.message}</p>}
       {search.status === 'pending' && <p className="status">Searching the catalog…</p>}
@@ -315,6 +355,18 @@ export function Library({ profile }: { profile: GuestProfile }) {
                         >
                           Watchlist
                         </button>
+                        {ratings.has(movie.id) && (
+                          <button
+                            type="button"
+                            className="library__clear"
+                            aria-label={`Clear rating for ${movie.title}`}
+                            onClick={() => {
+                              void handleClearRating(movie.id);
+                            }}
+                          >
+                            Clear
+                          </button>
+                        )}
                       </div>
                     </div>
                   </li>

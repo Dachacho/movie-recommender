@@ -72,7 +72,19 @@ interface TasteCache {
   vector: TasteVector;
 }
 
-type View = 'picks' | 'dashboard';
+type View = 'picks' | 'library' | 'dashboard';
+
+function viewFromHash(hash: string): View {
+  if (hash === '#dashboard') {
+    return 'dashboard';
+  }
+
+  if (hash === '#library') {
+    return 'library';
+  }
+
+  return 'picks';
+}
 
 export interface AppProps {
   /** Injected in tests; the app uses a Dexie-backed profile. */
@@ -266,6 +278,9 @@ function Masthead({ view }: { view: View }) {
           <a href="#picks" aria-current={view === 'picks' ? 'page' : undefined}>
             Picks
           </a>
+          <a href="#library" aria-current={view === 'library' ? 'page' : undefined}>
+            Library
+          </a>
           <a href="#dashboard" aria-current={view === 'dashboard' ? 'page' : undefined}>
             Dashboard
           </a>
@@ -452,9 +467,7 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 
 export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
-  const [view, setView] = useState<View>(() =>
-    window.location.hash === '#dashboard' ? 'dashboard' : 'picks',
-  );
+  const [view, setView] = useState<View>(() => viewFromHash(window.location.hash));
   const [prompt, setPrompt] = useState('');
   const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
   const [surpriseMe, setSurpriseMe] = useState(false);
@@ -473,7 +486,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   useEffect(() => {
     function handleHashChange() {
-      setView(window.location.hash === '#dashboard' ? 'dashboard' : 'picks');
+      setView(viewFromHash(window.location.hash));
     }
 
     window.addEventListener('hashchange', handleHashChange);
@@ -799,12 +812,28 @@ export function App({ profile: providedProfile }: AppProps = {}) {
     );
   }
 
+  if (view === 'library') {
+    return (
+      <div className="shell">
+        <SkipLink />
+        <Masthead view={view} />
+        <main id="main-content" tabIndex={-1} className="page page--library">
+          <Library profile={profile} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="shell">
       <SkipLink />
       <Masthead view={view} />
 
-      <main id="main-content" tabIndex={-1} className={`page${hasResults ? ' page--results' : ''}`}>
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className={`page${hasResults ? ' page--results' : ' page--idle'}`}
+      >
         {!hasResults && <Hero />}
 
         <form
@@ -1043,8 +1072,6 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             <p className="status">{POOL_TRIM_NOTICE}</p>
           )}
         </section>
-
-        <Library profile={profile} />
       </main>
     </div>
   );

@@ -362,6 +362,60 @@ describe('Dashboard', () => {
     ).toBeTruthy();
   });
 
+  it('previews five rows per panel and resolves only the visible ids', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings(
+      Array.from({ length: 7 }, (_value, index) => ({
+        movieId: index + 1,
+        rating: 4,
+        updatedAt: NOW - index * 1000,
+      })),
+    );
+    storage.seedWatchlist(
+      Array.from({ length: 6 }, (_value, index) => ({
+        movieId: 101 + index,
+        addedAt: NOW - index * 1000,
+      })),
+    );
+
+    const baseLookup = fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2, THE_LIGHTHOUSE]);
+    const resolvedIds: number[][] = [];
+    const lookup: MovieLookup = {
+      resolveMany: async (ids) => {
+        resolvedIds.push([...ids]);
+
+        return baseLookup.resolveMany(ids);
+      },
+    };
+
+    renderDashboard(profile, lookup);
+
+    const rated = await screen.findByRole('region', { name: 'Rated films' });
+    const watchlist = screen.getByRole('region', { name: 'Watchlist' });
+
+    expect(within(rated).getAllByRole('listitem')).toHaveLength(5);
+    expect(within(watchlist).getAllByRole('listitem')).toHaveLength(5);
+    expect(within(rated).getByText(/Showing 5 of 7\./)).toBeTruthy();
+    expect(within(watchlist).getByText(/Showing 5 of 6\./)).toBeTruthy();
+    expect(
+      within(rated)
+        .getByRole('link', { name: 'Find any film in the library.' })
+        .getAttribute('href'),
+    ).toBe('#library');
+    expect(
+      within(watchlist)
+        .getByRole('link', { name: 'Manage your watchlist in the library.' })
+        .getAttribute('href'),
+    ).toBe('#library');
+
+    await waitFor(() => expect(resolvedIds).toHaveLength(1));
+    expect(resolvedIds[0]).toEqual([1, 2, 3, 4, 5, 101, 102, 103, 104, 105]);
+    expect(resolvedIds[0]).not.toContain(6);
+    expect(resolvedIds[0]).not.toContain(7);
+    expect(resolvedIds[0]).not.toContain(106);
+  });
+
   it('keeps the fallback title when the lookup resolves nothing', async () => {
     const { profile, storage } = createProfile();
 
