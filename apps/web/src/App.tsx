@@ -231,6 +231,21 @@ function PosterPlaceholder({ title }: { title: string }) {
   );
 }
 
+function SkipLink() {
+  return (
+    <a
+      className="skip-link"
+      href="#main-content"
+      onClick={(event) => {
+        event.preventDefault();
+        document.getElementById('main-content')?.focus();
+      }}
+    >
+      Skip to main content
+    </a>
+  );
+}
+
 function Masthead({ view }: { view: View }) {
   return (
     <header className="masthead">
@@ -310,7 +325,10 @@ function MoviePoster({ movie, priority }: { movie: MovieCard; priority?: boolean
       className="poster"
       src={posterUrl(posterPath)}
       alt={`Poster for ${movie.title}`}
+      width={500}
+      height={750}
       loading={priority === true ? 'eager' : 'lazy'}
+      fetchPriority={priority === true ? 'high' : 'auto'}
       decoding="async"
       onError={() => setFailedPosterPath(posterPath)}
     />
@@ -768,8 +786,9 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   if (view === 'dashboard') {
     return (
       <div className="shell">
+        <SkipLink />
         <Masthead view={view} />
-        <main className="page page--dashboard">
+        <main id="main-content" tabIndex={-1} className="page page--dashboard">
           <Dashboard profile={profile} />
         </main>
       </div>
@@ -778,9 +797,10 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   return (
     <div className="shell">
+      <SkipLink />
       <Masthead view={view} />
 
-      <main className={`page${hasResults ? ' page--results' : ''}`}>
+      <main id="main-content" tabIndex={-1} className={`page${hasResults ? ' page--results' : ''}`}>
         {!hasResults && <Hero />}
 
         <form
@@ -818,6 +838,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           <label className="switch-row">
             <input
               type="checkbox"
+              name="surprise-me"
               checked={surpriseMe}
               disabled={controlsDisabled}
               onChange={(event) => setSurpriseMe(event.target.checked)}
@@ -838,6 +859,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
               <label htmlFor="list-paste">Paste a list — one film per line</label>
               <textarea
                 id="list-paste"
+                name="pasted-list"
                 rows={6}
                 value={pastedList}
                 placeholder={'Heat (1995)\nIn the Mood for Love\nAlien, 1979'}
@@ -923,6 +945,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             <div className="prompt-form__controls">
               <input
                 id="prompt"
+                name="mood"
                 type="text"
                 maxLength={300}
                 autoComplete="off"

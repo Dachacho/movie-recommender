@@ -228,6 +228,7 @@ export function Library({ profile }: { profile: GuestProfile }) {
           <div className="library__search-controls">
             <input
               id="library-search"
+              name="library-search"
               type="search"
               maxLength={80}
               autoComplete="off"

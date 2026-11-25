@@ -170,6 +170,7 @@ export function LetterboxdImport({
         {pending ? 'Importing…' : 'Import from Letterboxd'}
         <input
           type="file"
+          name="letterboxd-files"
           accept=".csv,text/csv"
           multiple
           disabled={pending}
