@@ -275,7 +275,7 @@ body {
 
 .main-pick {
   display: grid;
-  grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, clamp(15rem, 26vw, 20rem)) minmax(0, 1fr);
   gap: clamp(1.5rem, 4vw, 2.75rem);
   align-items: start;
 }
@@ -286,6 +286,7 @@ body {
   aspect-ratio: 2 / 3;
   border-radius: 2px;
   background: var(--surface-1);
+  box-shadow: 0 0 0 1px var(--line);
   object-fit: cover;
 }
 
@@ -294,7 +295,6 @@ body {
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  border: 1px solid var(--line);
   color: var(--text-3);
   font-size: 0.8rem;
   text-align: center;
@@ -1000,7 +1000,7 @@ body {
   }
 
   .main-pick .poster {
-    max-width: 14rem;
+    max-width: 16rem;
   }
 
   .library__row {

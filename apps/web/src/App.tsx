@@ -244,7 +244,7 @@ function Masthead({ view }: { view: View }) {
   );
 }
 
-function MoviePoster({ movie }: { movie: MovieCard }) {
+function MoviePoster({ movie, priority }: { movie: MovieCard; priority?: boolean }) {
   const [failedPosterPath, setFailedPosterPath] = useState<string | null>(null);
   const posterPath = movie.posterPath;
 
@@ -257,6 +257,8 @@ function MoviePoster({ movie }: { movie: MovieCard }) {
       className="poster"
       src={posterUrl(posterPath)}
       alt={`Poster for ${movie.title}`}
+      loading={priority === true ? 'eager' : 'lazy'}
+      decoding="async"
       onError={() => setFailedPosterPath(posterPath)}
     />
   );
@@ -299,7 +301,7 @@ function MainPick({ movie, disabled, pending, onReject }: MainPickProps) {
 
   return (
     <article className="main-pick" aria-label="Main pick">
-      <MoviePoster movie={movie} />
+      <MoviePoster movie={movie} priority />
       <div className="main-pick__body">
         <h2 className="main-pick__title">{movie.title}</h2>
         {facts.length > 0 && <p className="main-pick__meta">{facts.join('. ')}</p>}

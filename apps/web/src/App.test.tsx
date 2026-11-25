@@ -315,9 +315,13 @@ describe('App', () => {
 
     const poster = within(mainPick).getByAltText('Poster for Arrival');
     expect(poster.getAttribute('src')).toBe('https://image.tmdb.org/t/p/w500/arrival.jpg');
+    expect(poster.getAttribute('loading')).toBe('eager');
 
     const alternatives = screen.getByRole('list', { name: 'Alternatives' });
     expect(within(alternatives).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(alternatives).getByAltText('Poster for Moonlight').getAttribute('loading')).toBe(
+      'lazy',
+    );
     expect(within(alternatives).getByText('Moonlight')).toBeTruthy();
     expect(within(alternatives).getByText('Heat')).toBeTruthy();
     expect(within(alternatives).getByText('Paddington 2')).toBeTruthy();
