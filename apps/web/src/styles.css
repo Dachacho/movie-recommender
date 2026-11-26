@@ -2462,7 +2462,7 @@ body {
 
 @media (max-width: 720px) {
   .masthead__inner {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     gap: 12px;
     height: 58px;
     padding: 0 20px;
@@ -2478,7 +2478,7 @@ body {
   }
 
   .view-nav {
-    justify-self: end;
+    justify-self: center;
   }
 
   .view-nav a {
