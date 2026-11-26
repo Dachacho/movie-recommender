@@ -512,7 +512,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                           </span>
                           <button
                             type="button"
-                            className="dashboard__remove"
+                            className="dashboard__remove button--ghost"
                             aria-label={`Remove rating for ${title ?? 'this film'}`}
                             onClick={() => {
                               void removeRating(record.movieId);
@@ -561,7 +561,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                           </span>
                           <button
                             type="button"
-                            className="dashboard__remove"
+                            className="dashboard__remove button--ghost"
                             aria-label={`Remove ${title ?? 'this film'} from watchlist`}
                             onClick={() => {
                               void removeFromWatchlist(movieId);
@@ -628,7 +628,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
             <div className="dashboard__data-actions">
               <button
                 type="button"
-                className="dashboard__data-action"
+                className="button--secondary"
                 disabled={dataAction !== null || ratedFilms.length === 0}
                 onClick={() => {
                   void exportRatings();
@@ -638,7 +638,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               </button>
               <button
                 type="button"
-                className="dashboard__data-action"
+                className="button--secondary"
                 disabled={dataAction !== null}
                 onClick={() => {
                   void exportBackup();
@@ -649,7 +649,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               {!confirmingDelete && (
                 <button
                   type="button"
-                  className="dashboard__data-action"
+                  className="button--ghost-danger"
                   disabled={dataAction !== null}
                   onClick={() => {
                     setConfirmingDelete(true);
@@ -668,7 +668,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 <div className="dashboard__data-actions">
                   <button
                     type="button"
-                    className="dashboard__data-action dashboard__data-action--destructive"
+                    className="button--danger"
                     disabled={dataAction !== null}
                     autoFocus
                     aria-describedby="dashboard-delete-warning"
@@ -680,7 +680,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                   </button>
                   <button
                     type="button"
-                    className="dashboard__data-action"
+                    className="button--ghost"
                     disabled={dataAction !== null}
                     onClick={() => {
                       setConfirmingDelete(false);

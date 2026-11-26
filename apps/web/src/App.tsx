@@ -303,10 +303,6 @@ function Masthead({ view }: { view: View }) {
         </nav>
 
         <div className="masthead__tools">
-          <p className="masthead__status">
-            <span className="masthead__dot" aria-hidden="true" />
-            Local profile
-          </p>
           <ThemeToggle />
         </div>
       </div>
@@ -324,11 +320,6 @@ function Hero() {
         Tell us the mood, or leave it blank. One film and three backups, shaped by what you've
         rated.
       </p>
-      <ul className="hero__notes">
-        <li>No account needed</li>
-        <li>Your library stays local</li>
-        <li>Letterboxd-ready</li>
-      </ul>
     </section>
   );
 }
@@ -361,13 +352,14 @@ interface RejectButtonProps {
   disabled: boolean;
   pending: boolean;
   onReject: () => void;
+  ghost?: boolean;
 }
 
-function RejectButton({ title, disabled, pending, onReject }: RejectButtonProps) {
+function RejectButton({ title, disabled, pending, onReject, ghost = false }: RejectButtonProps) {
   return (
     <button
       type="button"
-      className="pick-action"
+      className={`pick-action${ghost ? ' pick-action--ghost' : ''}`}
       aria-label={`${title}: not tonight`}
       disabled={disabled}
       onClick={onReject}
@@ -434,7 +426,6 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
     <section className="alternatives">
       <div className="alternatives__head">
         <h2 className="alternatives__heading">If that's not it</h2>
-        <p className="alternatives__hint">Three more, chosen to sit apart from the main pick.</p>
       </div>
       <ul className="alternatives__list" aria-label="Alternatives">
         {movies.map((movie, offset) => {
@@ -456,6 +447,7 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
                     disabled={disabled}
                     pending={pendingIndex === index}
                     onReject={() => onReject(index)}
+                    ghost
                   />
                 </div>
               </div>
@@ -793,15 +785,6 @@ export function App({ profile: providedProfile }: AppProps = {}) {
     action.status === 'pending' && action.kind === 'replace' ? action.index : null;
 
   const hasResults = state.status === 'results';
-  const roundSourceLabel =
-    state.status === 'results'
-      ? {
-          catalog: 'the whole catalog',
-          watchlist: 'your watchlist',
-          rewatch: 'your rewatch shortlist',
-          paste: 'your pasted list',
-        }[state.round.intent.source]
-      : 'the whole catalog';
 
   if (view === 'dashboard') {
     return (
@@ -895,6 +878,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
               <div className="list-paste__actions">
                 <button
                   type="button"
+                  className="button--secondary"
                   disabled={controlsDisabled}
                   onClick={() => {
                     void submitRound();
@@ -977,13 +961,20 @@ export function App({ profile: providedProfile }: AppProps = {}) {
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
               />
-              <button type="submit" disabled={controlsDisabled}>
+              <button
+                type="submit"
+                className="button--primary"
+                data-loading={pending ? 'true' : undefined}
+                disabled={controlsDisabled}
+              >
                 {pending ? 'Finding a movie…' : 'Find my movie'}
               </button>
             </div>
           </div>
 
-          <p className="prompt-form__note">Your ratings and history stay in this browser.</p>
+          <p className="prompt-form__note">
+            No account needed. Your ratings and history stay in this browser.
+          </p>
         </form>
 
         <section className="results" aria-live="polite" aria-busy={controlsDisabled}>
@@ -1005,17 +996,10 @@ export function App({ profile: providedProfile }: AppProps = {}) {
             ) : (
               <div className="pick-round">
                 <div className="pick-round__toolbar">
-                  <div className="pick-round__heading">
-                    <h2 className="pick-round__title">Tonight's picks</h2>
-                    <p className="pick-round__meta">
-                      {`${String(state.round.movies.length)} ${
-                        state.round.movies.length === 1 ? 'film' : 'films'
-                      } from ${roundSourceLabel}`}
-                    </p>
-                  </div>
+                  <h2 className="pick-round__title">Tonight's picks</h2>
                   <button
                     type="button"
-                    className="pick-action pick-action--quiet"
+                    className="pick-action pick-action--ghost"
                     disabled={controlsDisabled}
                     onClick={() => {
                       void handleRefreshAll();

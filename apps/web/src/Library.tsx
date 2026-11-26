@@ -135,7 +135,7 @@ function Pager({ page, totalPages, onPrevious, onNext }: PagerProps) {
     <div className="library__pager">
       <button
         type="button"
-        className="library__pager-button"
+        className="button--secondary"
         disabled={page === 0}
         onClick={onPrevious}
       >
@@ -146,7 +146,7 @@ function Pager({ page, totalPages, onPrevious, onNext }: PagerProps) {
       </p>
       <button
         type="button"
-        className="library__pager-button"
+        className="button--secondary"
         disabled={page >= totalPages - 1}
         onClick={onNext}
       >
@@ -463,7 +463,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                         <p className="library__rating">{`${formatRating(entry.rating)} / 5`}</p>
                         <button
                           type="button"
-                          className="library__clear"
+                          className="button--ghost"
                           aria-label={`Clear rating for ${title ?? 'this film'}`}
                           onClick={() => {
                             void handleClearRating(entry.movieId);
@@ -522,7 +522,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                       <div className="library__controls">
                         <button
                           type="button"
-                          className="library__clear"
+                          className="button--ghost"
                           aria-label={`Remove ${title ?? 'this film'} from watchlist`}
                           onClick={() => {
                             void handleRemoveFromWatchlist(movieId);
@@ -569,7 +569,12 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <button type="submit" disabled={search.status === 'pending'}>
+                <button
+                  type="submit"
+                  className="button--secondary"
+                  data-loading={search.status === 'pending' ? 'true' : undefined}
+                  disabled={search.status === 'pending'}
+                >
                   {search.status === 'pending' ? 'Searching…' : 'Search'}
                 </button>
               </div>
@@ -661,7 +666,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                             {ratings.has(movie.id) && (
                               <button
                                 type="button"
-                                className="library__clear"
+                                className="button--ghost"
                                 aria-label={`Clear rating for ${movie.title}`}
                                 onClick={() => {
                                   void handleClearRating(movie.id);

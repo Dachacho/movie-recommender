@@ -10,7 +10,7 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      className="theme-toggle"
+      className="theme-toggle button--ghost"
       aria-label={actionLabel}
       title={actionLabel}
       onClick={() => {
@@ -39,7 +39,6 @@ export function ThemeToggle() {
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
         )}
       </svg>
-      <span className="theme-toggle__label">{isDark ? 'Light' : 'Dark'}</span>
     </button>
   );
 }
