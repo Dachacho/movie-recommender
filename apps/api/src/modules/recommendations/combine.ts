@@ -7,6 +7,16 @@ export const MIN_COMBINED_NORM = 1e-9;
 export interface CombineQueryVectorInput {
   promptVector?: readonly number[] | null;
   tasteVector?: readonly number[] | null;
+  /** Defaults to {@link PROMPT_WEIGHT}; must be finite and non-negative. */
+  promptWeight?: number;
+  /** Defaults to {@link TASTE_WEIGHT}; must be finite and non-negative. */
+  tasteWeight?: number;
+}
+
+function validateWeight(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${name} must be a finite, non-negative number, received ${value}.`);
+  }
 }
 
 function validateVector(vector: readonly number[], name: string): void {
@@ -33,6 +43,11 @@ function validateVector(vector: readonly number[], name: string): void {
 export function combineQueryVector(input: CombineQueryVectorInput): number[] | null {
   const promptVector = input.promptVector ?? null;
   const tasteVector = input.tasteVector ?? null;
+  const promptWeight = input.promptWeight ?? PROMPT_WEIGHT;
+  const tasteWeight = input.tasteWeight ?? TASTE_WEIGHT;
+
+  validateWeight(promptWeight, 'promptWeight');
+  validateWeight(tasteWeight, 'tasteWeight');
 
   if (promptVector !== null) {
     validateVector(promptVector, 'promptVector');
@@ -55,7 +70,7 @@ export function combineQueryVector(input: CombineQueryVectorInput): number[] | n
 
   for (let index = 0; index < combined.length; index += 1) {
     const value =
-      PROMPT_WEIGHT * (promptVector[index] ?? 0) + TASTE_WEIGHT * (tasteVector[index] ?? 0);
+      promptWeight * (promptVector[index] ?? 0) + tasteWeight * (tasteVector[index] ?? 0);
 
     combined[index] = value;
     norm = Math.hypot(norm, value);

@@ -18,7 +18,7 @@ const GENRE_KEYWORDS: readonly GenreKeyword[] = [
   { genre: 'Family', pattern: /\bfamily\b/i },
   { genre: 'Fantasy', pattern: /\bfantas(?:y|ies)\b/i },
   { genre: 'History', pattern: /\bhistor(?:y|ies|ical|ic)\b/i },
-  { genre: 'Horror', pattern: /\bhorrors?\b/i },
+  { genre: 'Horror', pattern: /\bhorrors?\b|\bscary\b|\bfrightening\b/i },
   { genre: 'Music', pattern: /\bmusic(?:al|als)?\b/i },
   { genre: 'Mystery', pattern: /\bmyster(?:y|ies)\b/i },
   { genre: 'Romance', pattern: /\bromances?\b|\bromantic\b/i },
@@ -27,6 +27,60 @@ const GENRE_KEYWORDS: readonly GenreKeyword[] = [
   { genre: 'War', pattern: /\bwar\b/i },
   { genre: 'Western', pattern: /\bwesterns?\b/i },
 ];
+
+const ROM_COM_PATTERN = /\brom-?coms?\b/i;
+const ROM_COM_GENRES = ['Comedy', 'Romance'] as const;
+
+// A genre preceded by a negation is not a positive request. Only the current
+// clause counts: a contrastive conjunction or punctuation resets the window, so
+// "not horror but comedy" keeps Comedy. The window is three words, short enough
+// that "no longer than 2 hours thriller" does not suppress Thriller.
+const NEGATION_WORDS = new Set([
+  'not',
+  'no',
+  'without',
+  'except',
+  'excluding',
+  "don't",
+  'dont',
+  "didn't",
+  'didnt',
+  "doesn't",
+  'doesnt',
+  "wouldn't",
+  'wouldnt',
+  "won't",
+  'wont',
+]);
+const NEGATION_WINDOW = 3;
+const CLAUSE_BREAK_PATTERN = /\b(?:but|however|yet|instead|rather)\b|[.,;!?]/gi;
+// "not only X" includes X; "anything but X" and "all but X" exclude X.
+const NOT_ONLY_PATTERN = /\bnot\s+only\s+(?:(?:a|an|the|any|just|merely)\s+)*$/i;
+const ANYTHING_BUT_PATTERN = /\b(?:anything|all)\s+but\s+(?:(?:a|an|the|any)\s+)*$/i;
+
+function isNegated(prompt: string, index: number): boolean {
+  const before = prompt.slice(0, index).toLowerCase().replaceAll('\u2019', "'");
+
+  if (NOT_ONLY_PATTERN.test(before)) {
+    return false;
+  }
+
+  if (ANYTHING_BUT_PATTERN.test(before)) {
+    return true;
+  }
+
+  let clauseStart = 0;
+
+  for (const match of before.matchAll(CLAUSE_BREAK_PATTERN)) {
+    if (match.index !== undefined) {
+      clauseStart = match.index + match[0].length;
+    }
+  }
+
+  const words = before.slice(clauseStart).match(/[a-z']+/g) ?? [];
+
+  return words.slice(-NEGATION_WINDOW).some((word) => NEGATION_WORDS.has(word));
+}
 
 const WORD_NUMBERS: Readonly<Record<string, number>> = {
   one: 1,
@@ -48,6 +102,7 @@ const NUMBER_SOURCE =
 
 const MAX_DIRECTIONS = new Set([
   'no more than',
+  'no longer than',
   'at most',
   'less than',
   'shorter than',
@@ -67,27 +122,45 @@ const MIN_DECADE_START = 1870;
 const MAX_DECADE_START = 2090;
 
 function findGenres(prompt: string): string[] {
-  const matches: { genre: string; index: number }[] = [];
+  const indexByGenre = new Map<string, number>();
+
+  function addGenre(genre: string, index: number): void {
+    const current = indexByGenre.get(genre);
+
+    // Keep the first mention; a later duplicate must not move the genre or
+    // duplicate it in the filter array.
+    if (current === undefined || index < current) {
+      indexByGenre.set(genre, index);
+    }
+  }
+
+  const romCom = ROM_COM_PATTERN.exec(prompt);
+
+  if (romCom !== null && !isNegated(prompt, romCom.index)) {
+    for (const genre of ROM_COM_GENRES) {
+      addGenre(genre, romCom.index);
+    }
+  }
 
   for (const { genre, pattern } of GENRE_KEYWORDS) {
     const match = pattern.exec(prompt);
 
-    if (match !== null) {
-      matches.push({ genre, index: match.index });
+    if (match !== null && !isNegated(prompt, match.index)) {
+      addGenre(genre, match.index);
     }
   }
 
   // Prompt order keeps the result deterministic; query.ts combines the array with
   // arrayOverlaps, so multiple genres behave as OR (match any), not AND.
-  matches.sort((left, right) => {
-    if (left.index !== right.index) {
-      return left.index - right.index;
-    }
+  return [...indexByGenre.entries()]
+    .sort((left, right) => {
+      if (left[1] !== right[1]) {
+        return left[1] - right[1];
+      }
 
-    return left.genre < right.genre ? -1 : left.genre > right.genre ? 1 : 0;
-  });
-
-  return matches.map((match) => match.genre);
+      return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
+    })
+    .map(([genre]) => genre);
 }
 
 function twoDigitDecadeStart(value: number): number | undefined {
@@ -115,8 +188,9 @@ function decadeStart(digits: string): number | undefined {
 
 function findDecadeStart(prompt: string): number | undefined {
   // A four-digit decade is preferred by the alternation; "90s" still matches the
-  // two-digit branch. Two-digit decades are read as 20th century except 00s/10s.
-  const pattern = /\b'?(\d{4}|\d{2})s\b/gi;
+  // two-digit branch. An apostrophe is accepted before or after the digits
+  // ("'90s", "90's"). Two-digit decades are read as 20th century except 00s/10s.
+  const pattern = /\b'?(\d{4}|\d{2})'?s\b/gi;
 
   for (const match of prompt.matchAll(pattern)) {
     const digits = match[1];
@@ -149,18 +223,121 @@ function runtimeMinutes(numberText: string, unit: string): number | undefined {
   return minutes >= 0 ? minutes : undefined;
 }
 
+interface RuntimeRange {
+  runtimeMin: number;
+  runtimeMax: number;
+  index: number;
+}
+
+interface TrailingRuntimeBound {
+  minutes: number;
+  index: number;
+  max: boolean;
+}
+
+function findRuntimeRanges(prompt: string): RuntimeRange[] {
+  // The same unit applies to both ends: "between 90 and 120 minutes" and
+  // "90–120 minutes". A reversed range is ignored rather than silently swapped.
+  const ranges: RuntimeRange[] = [];
+  const patterns = [
+    new RegExp(
+      `\\b(?:between|from)\\s+(${NUMBER_SOURCE})\\s+(?:and|to)\\s+(${NUMBER_SOURCE})\\s+` +
+        `(minutes?|mins?|hours?|hrs?|h)\\b`,
+      'gi',
+    ),
+    new RegExp(
+      `\\b(${NUMBER_SOURCE})\\s*[-–—]\\s*(${NUMBER_SOURCE})\\s+` +
+        `(minutes?|mins?|hours?|hrs?|h)\\b`,
+      'gi',
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of prompt.matchAll(pattern)) {
+      const startText = match[1];
+      const endText = match[2];
+      const unit = match[3];
+
+      if (startText === undefined || endText === undefined || unit === undefined) {
+        continue;
+      }
+
+      const runtimeMin = runtimeMinutes(startText, unit);
+      const runtimeMax = runtimeMinutes(endText, unit);
+
+      if (runtimeMin === undefined || runtimeMax === undefined || runtimeMin > runtimeMax) {
+        continue;
+      }
+
+      ranges.push({ runtimeMin, runtimeMax, index: match.index });
+    }
+  }
+
+  return ranges;
+}
+
+function findTrailingRuntimeBounds(prompt: string): TrailingRuntimeBound[] {
+  const pattern = new RegExp(
+    `\\b(${NUMBER_SOURCE})\\s+(minutes?|mins?|hours?|hrs?|h)\\s+or\\s+(less|fewer|more)\\b`,
+    'gi',
+  );
+  const bounds: TrailingRuntimeBound[] = [];
+
+  for (const match of prompt.matchAll(pattern)) {
+    const numberText = match[1];
+    const unit = match[2];
+    const direction = match[3];
+
+    if (numberText === undefined || unit === undefined || direction === undefined) {
+      continue;
+    }
+
+    const minutes = runtimeMinutes(numberText, unit);
+
+    if (minutes === undefined) {
+      continue;
+    }
+
+    bounds.push({
+      minutes,
+      index: match.index,
+      max: direction.toLowerCase() !== 'more',
+    });
+  }
+
+  return bounds;
+}
+
+function earliestBound(bounds: readonly RuntimeBound[]): RuntimeBound | undefined {
+  let earliest: RuntimeBound | undefined;
+
+  for (const bound of bounds) {
+    if (earliest === undefined || bound.index < earliest.index) {
+      earliest = bound;
+    }
+  }
+
+  return earliest;
+}
+
 function findRuntimeBounds(prompt: string): {
   runtimeMin?: number;
   runtimeMax?: number;
 } {
+  const minBounds: RuntimeBound[] = [];
+  const maxBounds: RuntimeBound[] = [];
+
+  for (const range of findRuntimeRanges(prompt)) {
+    minBounds.push({ minutes: range.runtimeMin, index: range.index });
+    maxBounds.push({ minutes: range.runtimeMax, index: range.index });
+  }
+
   const pattern = new RegExp(
-    `\\b(no more than|at most|less than|shorter than|under|below|up to|maximum|max|` +
-      `more than|longer than|at least|above|over|minimum|min)\\s+` +
+    `\\b(no more than|no longer than|at most|less than|shorter than|under|below|up to|` +
+      `maximum|max|more than|longer than|at least|above|over|minimum|min)\\s+` +
       `(${NUMBER_SOURCE})\\s+(minutes?|mins?|hours?|hrs?|h)\\b`,
     'gi',
   );
-  let min: RuntimeBound | undefined;
-  let max: RuntimeBound | undefined;
 
   for (const match of prompt.matchAll(pattern)) {
     const direction = match[1];
@@ -180,11 +357,24 @@ function findRuntimeBounds(prompt: string): {
     const bound = { minutes, index: match.index };
 
     if (MAX_DIRECTIONS.has(direction.toLowerCase())) {
-      max ??= bound;
+      maxBounds.push(bound);
     } else {
-      min ??= bound;
+      minBounds.push(bound);
     }
   }
+
+  for (const trailing of findTrailingRuntimeBounds(prompt)) {
+    const bound = { minutes: trailing.minutes, index: trailing.index };
+
+    if (trailing.max) {
+      maxBounds.push(bound);
+    } else {
+      minBounds.push(bound);
+    }
+  }
+
+  let min = earliestBound(minBounds);
+  let max = earliestBound(maxBounds);
 
   // Contradictory bounds ("under 90 minutes but over 2 hours") keep the bound mentioned
   // first and drop the later one, so the result always passes filter validation.

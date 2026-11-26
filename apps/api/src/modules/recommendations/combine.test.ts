@@ -35,6 +35,63 @@ describe('combineQueryVector', () => {
     expect(Math.hypot(...combined)).toBeCloseTo(1, 12);
   });
 
+  it('uses the production weights when no weights are provided', () => {
+    const promptVector = axisVector(0);
+    const tasteVector = axisVector(1);
+
+    expect(combineQueryVector({ promptVector, tasteVector })).toEqual(
+      combineQueryVector({ promptVector, tasteVector, promptWeight: 0.5, tasteWeight: 0.5 }),
+    );
+  });
+
+  it('combines vectors with explicit prompt and taste weights', () => {
+    const promptVector = axisVector(0);
+    const tasteVector = axisVector(1);
+    const combined = combineQueryVector({
+      promptVector,
+      tasteVector,
+      promptWeight: 0.8,
+      tasteWeight: 0.2,
+    });
+
+    expect(combined).not.toBeNull();
+    if (combined === null) {
+      throw new Error('expected a combined query vector');
+    }
+
+    const norm = Math.hypot(0.8, 0.2);
+    expect(at(combined, 0)).toBeCloseTo(0.8 / norm, 12);
+    expect(at(combined, 1)).toBeCloseTo(0.2 / norm, 12);
+    expect(at(combined, 2)).toBeCloseTo(0, 12);
+    expect(Math.hypot(...combined)).toBeCloseTo(1, 12);
+  });
+
+  it('favours the prompt vector at prompt weight 1 and taste weight 0', () => {
+    const promptVector = axisVector(0);
+    const tasteVector = axisVector(1);
+
+    expect(
+      combineQueryVector({ promptVector, tasteVector, promptWeight: 1, tasteWeight: 0 }),
+    ).toEqual(promptVector);
+  });
+
+  it.each([
+    ['promptWeight', { promptWeight: Number.NaN }],
+    ['promptWeight', { promptWeight: Number.POSITIVE_INFINITY }],
+    ['promptWeight', { promptWeight: -0.1 }],
+    ['tasteWeight', { tasteWeight: Number.NaN }],
+    ['tasteWeight', { tasteWeight: Number.NEGATIVE_INFINITY }],
+    ['tasteWeight', { tasteWeight: -1 }],
+  ])('rejects invalid %s values', (name, weights) => {
+    const promptVector = axisVector(0);
+    const tasteVector = axisVector(1);
+
+    expect(() => combineQueryVector({ promptVector, tasteVector, ...weights })).toThrow(RangeError);
+    expect(() => combineQueryVector({ promptVector, tasteVector, ...weights })).toThrow(
+      new RegExp(`${name} must be a finite, non-negative number`),
+    );
+  });
+
   it('returns the prompt vector when there is no taste vector', () => {
     const promptVector = axisVector(1);
 

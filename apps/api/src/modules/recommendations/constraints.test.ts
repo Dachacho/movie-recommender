@@ -177,4 +177,125 @@ describe('parsePromptConstraints', () => {
       expectValidFilters(parsePromptConstraints(prompt));
     }
   });
+
+  it.each([
+    ['a rom-com', { genres: ['Comedy', 'Romance'] }],
+    ['a romcom', { genres: ['Comedy', 'Romance'] }],
+    ['a rom-com from the 90s', { genres: ['Comedy', 'Romance'], yearMin: 1990, yearMax: 1999 }],
+  ])('maps the rom-com in %s to Romance and Comedy', (prompt, expected) => {
+    expect(parsePromptConstraints(prompt)).toEqual(expected);
+  });
+
+  it.each([
+    ["the 80's", 1980],
+    ["the 90's", 1990],
+    ["the 1990's", 1990],
+    ["the '90s", 1990],
+  ])('parses the apostrophe decade in %s', (prompt, start) => {
+    expect(expectFilters(prompt)).toEqual({ yearMin: start, yearMax: start + 9 });
+  });
+
+  it.each([
+    ['between 90 and 120 minutes', { runtimeMin: 90, runtimeMax: 120 }],
+    ['between two and three hours', { runtimeMin: 120, runtimeMax: 180 }],
+    ['from 90 to 120 minutes', { runtimeMin: 90, runtimeMax: 120 }],
+    ['from 1 to 2 hours', { runtimeMin: 60, runtimeMax: 120 }],
+    ['90–120 minutes', { runtimeMin: 90, runtimeMax: 120 }],
+    ['90 - 120 min', { runtimeMin: 90, runtimeMax: 120 }],
+  ])('parses the runtime range %s', (prompt, expected) => {
+    expect(parsePromptConstraints(prompt)).toEqual(expected);
+  });
+
+  it.each([
+    ['90 minutes or less', { runtimeMax: 90 }],
+    ['90 mins or fewer', { runtimeMax: 90 }],
+    ['2 hours or less', { runtimeMax: 120 }],
+    ['90 minutes or more', { runtimeMin: 90 }],
+    ['2 hours or more', { runtimeMin: 120 }],
+  ])('parses the trailing runtime bound %s', (prompt, expected) => {
+    expect(parsePromptConstraints(prompt)).toEqual(expected);
+  });
+
+  it('parses no longer than as an upper runtime bound', () => {
+    expect(parsePromptConstraints('no longer than 2 hours')).toEqual({ runtimeMax: 120 });
+    expect(parsePromptConstraints('a no longer than 2 hours thriller')).toEqual({
+      genres: ['Thriller'],
+      runtimeMax: 120,
+    });
+  });
+
+  it.each([
+    [
+      'under 90 minutes, but between 100 and 120 minutes keeps the first max 90 and drops the later conflicting min',
+      'under 90 minutes, but between 100 and 120 minutes',
+      { runtimeMax: 90 },
+    ],
+    [
+      'between 100 and 120 minutes, but under 90 minutes keeps the earlier range (min 100, max 120)',
+      'between 100 and 120 minutes, but under 90 minutes',
+      { runtimeMin: 100, runtimeMax: 120 },
+    ],
+    [
+      'under 3 hours, but between 100 and 120 minutes keeps the first max 180 and first min 100',
+      'under 3 hours, but between 100 and 120 minutes',
+      { runtimeMin: 100, runtimeMax: 180 },
+    ],
+    [
+      '90 minutes or less, but over 2 hours keeps the first max 90 and drops the later conflicting min',
+      '90 minutes or less, but over 2 hours',
+      { runtimeMax: 90 },
+    ],
+  ])('%s', (_name, prompt, expected) => {
+    expect(parsePromptConstraints(prompt)).toEqual(expected);
+  });
+
+  it.each(['a scary movie', 'a frightening film'])('maps %s to Horror', (prompt) => {
+    expect(expectFilters(prompt).genres).toContain('Horror');
+  });
+
+  it.each(['not a horror movie', 'no horror', 'a movie without horror'])(
+    'does not turn the negated genre in %s into a positive filter',
+    (prompt) => {
+      expect(parsePromptConstraints(prompt)).toBeUndefined();
+    },
+  );
+
+  it('suppresses both genres in a negated compound genre', () => {
+    expect(parsePromptConstraints('not a romantic comedy')).toBeUndefined();
+  });
+
+  it('keeps a genre mentioned after the negated clause', () => {
+    expect(parsePromptConstraints('not a horror movie, but a thriller')).toEqual({
+      genres: ['Thriller'],
+    });
+    expect(parsePromptConstraints('not horror but comedy')).toEqual({ genres: ['Comedy'] });
+  });
+
+  it('treats not only as inclusion, not negation', () => {
+    expect(parsePromptConstraints('not only horror but also romance')).toEqual({
+      genres: ['Horror', 'Romance'],
+    });
+    expect(parsePromptConstraints('not only a horror movie')).toEqual({ genres: ['Horror'] });
+  });
+
+  it.each([
+    ["I don't want horror"],
+    ['I dont want horror'],
+    ['I don\u2019t want horror'],
+    ["I didn't like horror"],
+    ["it doesn't need horror"],
+    ["I wouldn't watch horror"],
+    ["I won't watch horror"],
+  ])('treats the contraction in %s as negation', (prompt) => {
+    expect(parsePromptConstraints(prompt)).toBeUndefined();
+  });
+
+  it.each([
+    ['anything but horror'],
+    ['all but horror'],
+    ['anything but a horror movie'],
+    ['all but the horror'],
+  ])('treats the idiom in %s as negation', (prompt) => {
+    expect(parsePromptConstraints(prompt)).toBeUndefined();
+  });
 });
