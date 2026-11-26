@@ -19,9 +19,9 @@ Hand-labelled prompts. Expected filters are exactly what the existing filter sch
 | --- | --- | --- | --- |
 | explicit | 7 | 7 | 5 |
 | soft | 8 | 0 | 8 |
-| edge | 10 | 7 | 7 |
+| edge | 11 | 8 | 8 |
 | control | 6 | 0 | 0 |
-| **total** | **31** | **14** | **20** |
+| **total** | **32** | **15** | **21** |
 
 ## Parser audit
 
@@ -48,6 +48,10 @@ Rules added for those misses:
 - "scary"/"frightening" => Horror.
 - Negated genre mentions suppress the positive match without adding an excludeGenres filter.
 
+**Follow-up user-reported miss:** `lighthearted movie i can watch with my girlfriend`
+
+This exact prompt previously parsed to no filters, so a thriller-leaning taste pulled thriller/crime/horror picks. Added "lighthearted", "light-hearted" and "light hearted" as Comedy synonyms in the existing Comedy pattern. "Girlfriend" remains date context only: no Romance hard filter, and Romance stays a 0.5 graded label for this case. The taste blend remains 0.50/0.50.
+
 Follow-up hardening: "not only" is treated as inclusion; contractions (don't/dont, didn't, doesn't, wouldn't, won't) and "anything but"/"all but" are treated as negation; and range, directional and trailing runtime bounds now compete by mention index, with the existing first-bound-wins rule resolving contradictions.
 
 Production retrieval still uses parser output, so these fixes directly change which filters are sent for the affected prompts.
@@ -62,7 +66,7 @@ Production retrieval still uses parser output, so these fixes directly change wh
 
 ## Parse coverage
 
-Parse accuracy: 31/31 (100.0%).
+Parse accuracy: 32/32 (100.0%).
 
 No parse misses.
 
@@ -72,18 +76,18 @@ All five weight pairs use the same prompts, batch embeddings and synthetic taste
 
 | Prompt / taste | Constraint satisfaction | Non-empty satisfaction | Empty results | Genre precision@4 all | Hard | Soft | Taste similarity |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.35 / 0.65 | 14/14 (100.0%) | 14/14 | 0 | 0.7575 | 0.9917 | 0.4063 | 0.0949 |
-| 0.50 / 0.50 | 14/14 (100.0%) | 14/14 | 0 | 0.8812 | 0.9917 | 0.7156 | 0.0598 |
-| 0.65 / 0.35 | 14/14 (100.0%) | 14/14 | 0 | 0.8762 | 0.9917 | 0.7031 | 0.0302 |
-| 0.80 / 0.20 | 14/14 (100.0%) | 14/14 | 0 | 0.8600 | 0.9875 | 0.6688 | 0.0036 |
-| 1.00 / 0.00 | 14/14 (100.0%) | 14/14 | 0 | 0.8850 | 0.9917 | 0.7250 | -0.0144 |
+| 0.35 / 0.65 | 15/15 (100.0%) | 15/15 | 0 | 0.7690 | 0.9923 | 0.4063 | 0.0951 |
+| 0.50 / 0.50 | 15/15 (100.0%) | 15/15 | 0 | 0.8869 | 0.9923 | 0.7156 | 0.0589 |
+| 0.65 / 0.35 | 15/15 (100.0%) | 15/15 | 0 | 0.8821 | 0.9923 | 0.7031 | 0.0297 |
+| 0.80 / 0.20 | 15/15 (100.0%) | 15/15 | 0 | 0.8667 | 0.9885 | 0.6688 | 0.0028 |
+| 1.00 / 0.00 | 15/15 (100.0%) | 15/15 | 0 | 0.8905 | 0.9923 | 0.7250 | -0.0153 |
 
 ## Findings
 
-- Parser: 31/31 cases match exactly (100.0%).
+- Parser: 32/32 cases match exactly (100.0%).
 - Constraint satisfaction across non-empty filtered cases ranges 1.0000–1.0000; empty results range 0–0 per weight pair.
-- Genre precision@4: hard-filter cases 0.9875–0.9917, soft cases 0.4063–0.7250.
-- Taste similarity (diagnostic) ranges -0.0144–0.0949 against the fixed synthetic persona.
+- Genre precision@4: hard-filter cases 0.9885–0.9923, soft cases 0.4063–0.7250.
+- Taste similarity (diagnostic) ranges -0.0153–0.0951 against the fixed synthetic persona.
 
 ### Recommendation
 
@@ -93,7 +97,7 @@ Keep 0.50 / 0.50. The best alternative (1.00 / 0.00) changes soft genre precisio
 
 ## Caveats
 
-- The set is small (31 hand-labelled prompts) and the genre labels are an authored interpretation, not an objective ground truth.
+- The set is small (32 hand-labelled prompts) and the genre labels are an authored interpretation, not an objective ground truth.
 - The synthetic taste vector is a fixed deterministic direction, not a real user; taste similarity is a diagnostic, not evidence about personalization.
 - One deterministic run, no confidence intervals or significance test. Differences below the 0.02 materiality margin are treated as noise.
 - Hard-filter cases are partly guaranteed by the filter itself; their genre precision checks the filter/rank interaction, not semantic understanding.

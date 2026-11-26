@@ -11,7 +11,7 @@ const GENRE_KEYWORDS: readonly GenreKeyword[] = [
   { genre: 'Action', pattern: /\baction\b/i },
   { genre: 'Adventure', pattern: /\badventures?\b/i },
   { genre: 'Animation', pattern: /\banimat(?:ion|ed)\b/i },
-  { genre: 'Comedy', pattern: /\bcomed(?:y|ies|ic)\b|\bfunny\b/i },
+  { genre: 'Comedy', pattern: /\bcomed(?:y|ies|ic)\b|\bfunny\b|\blight[\s-]?hearted\b/i },
   { genre: 'Crime', pattern: /\bcrimes?\b/i },
   { genre: 'Documentary', pattern: /\bdocumentar(?:y|ies)\b/i },
   { genre: 'Drama', pattern: /\bdramas?\b/i },

@@ -251,6 +251,13 @@ export const PROMPT_CASES: readonly PromptCase[] = [
     expectedFilters: undefined,
     genreWeights: {},
   },
+  {
+    id: 'edge-lighthearted-girlfriend',
+    prompt: 'lighthearted movie i can watch with my girlfriend',
+    group: 'edge',
+    expectedFilters: { genres: ['Comedy'] },
+    genreWeights: { Comedy: 1, Romance: 0.5 },
+  },
 
   // Control: vague prompts with no filter and no genre signal.
   {

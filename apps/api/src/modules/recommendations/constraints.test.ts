@@ -104,6 +104,14 @@ describe('parsePromptConstraints', () => {
     expect(expectFilters('a historical epic').genres).toContain('History');
   });
 
+  it.each([
+    ['lighthearted movie i can watch with my girlfriend'],
+    ['a light-hearted movie'],
+    ['a light hearted movie'],
+  ])('maps the lighthearted synonym in %s to Comedy', (prompt) => {
+    expect(parsePromptConstraints(prompt)).toEqual({ genres: ['Comedy'] });
+  });
+
   it('collects multiple genres in prompt order', () => {
     // Multiple genres share one array, and the query applies arrayOverlaps (OR).
     expect(expectFilters('a funny thriller').genres).toEqual(['Comedy', 'Thriller']);

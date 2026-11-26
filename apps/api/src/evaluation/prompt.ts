@@ -77,6 +77,19 @@ const PARSER_RULES_ADDED: readonly string[] = [
   'Negated genre mentions suppress the positive match without adding an excludeGenres filter.',
 ];
 
+interface FollowUpMiss {
+  prompt: string;
+  explanation: string;
+}
+
+const FOLLOW_UP_MISSES: readonly FollowUpMiss[] = [
+  {
+    prompt: 'lighthearted movie i can watch with my girlfriend',
+    explanation:
+      'This exact prompt previously parsed to no filters, so a thriller-leaning taste pulled thriller/crime/horror picks. Added "lighthearted", "light-hearted" and "light hearted" as Comedy synonyms in the existing Comedy pattern. "Girlfriend" remains date context only: no Romance hard filter, and Romance stays a 0.5 graded label for this case. The taste blend remains 0.50/0.50.',
+  },
+];
+
 interface ParseCheck {
   promptCase: PromptCase;
   index: number;
@@ -344,6 +357,14 @@ function renderReport(input: ReportInput): string {
   }
 
   lines.push('');
+
+  for (const miss of FOLLOW_UP_MISSES) {
+    lines.push(`**Follow-up user-reported miss:** \`${miss.prompt}\``);
+    lines.push('');
+    lines.push(miss.explanation);
+    lines.push('');
+  }
+
   lines.push(
     'Follow-up hardening: "not only" is treated as inclusion; contractions (don\'t/dont, didn\'t, doesn\'t, wouldn\'t, won\'t) and "anything but"/"all but" are treated as negation; and range, directional and trailing runtime bounds now compete by mention index, with the existing first-bound-wins rule resolving contradictions.',
   );
