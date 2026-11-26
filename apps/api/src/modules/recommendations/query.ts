@@ -272,6 +272,7 @@ export async function findNearestMovies(
       embedding: movies.embedding,
       voteAverage: movies.voteAverage,
       voteCount: movies.voteCount,
+      genres: movies.genres,
       distance,
     })
     .from(movies)
@@ -284,6 +285,7 @@ export async function findNearestMovies(
     embedding: requireEmbedding(row.embedding),
     voteAverage: row.voteAverage,
     voteCount: row.voteCount,
+    genres: row.genres,
     similarity: 1 - row.distance,
   }));
 
@@ -314,6 +316,7 @@ export async function findColdStartPool(
       embedding: movies.embedding,
       voteAverage: movies.voteAverage,
       voteCount: movies.voteCount,
+      genres: movies.genres,
     })
     .from(movies)
     .where(buildWhere(input.filters, input.excludeIds, input.candidateIds))
@@ -325,5 +328,6 @@ export async function findColdStartPool(
     embedding: requireEmbedding(row.embedding),
     voteAverage: row.voteAverage,
     voteCount: row.voteCount,
+    genres: row.genres,
   }));
 }

@@ -35,6 +35,7 @@ export interface MovieCandidate {
   embedding: number[];
   voteAverage: number | null;
   voteCount: number | null;
+  genres?: readonly string[] | null;
 }
 
 export interface ScoredCandidate extends MovieCandidate {
