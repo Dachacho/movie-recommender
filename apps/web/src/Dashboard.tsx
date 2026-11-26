@@ -36,6 +36,11 @@ interface TitleBatch {
   movies: ReadonlyMap<number, MovieCard | null>;
 }
 
+interface RowFocusRequest {
+  panel: 'ratings' | 'watchlist';
+  index: number;
+}
+
 function TitlePlaceholder() {
   return <span className="title-skeleton" aria-hidden="true" />;
 }
@@ -208,8 +213,15 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [rowFocus, setRowFocus] = useState<RowFocusRequest | null>(null);
   const dataActionInFlight = useRef(false);
   const loadId = useRef(0);
+  const ratingsListRef = useRef<HTMLUListElement | null>(null);
+  const watchlistListRef = useRef<HTMLUListElement | null>(null);
+  const ratingsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const watchlistHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const deleteButtonRef = useRef<HTMLButtonElement | null>(null);
+  const restoreDeleteFocus = useRef(false);
 
   const loadDashboard = useCallback(async (): Promise<void> => {
     loadId.current += 1;
@@ -280,7 +292,41 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     };
   }, [loadDashboard]);
 
-  async function removeRating(movieId: number): Promise<void> {
+  // The removed row's button is unmounted with it. Once the reload has
+  // rendered, focus the row that took its place, else the previous row, else
+  // the heading that labels the now-empty panel.
+  useEffect(() => {
+    if (rowFocus === null) {
+      return;
+    }
+
+    const isRatings = rowFocus.panel === 'ratings';
+    const rows =
+      (isRatings ? ratingsListRef.current : watchlistListRef.current)?.querySelectorAll('li') ?? [];
+    const row = rows[rowFocus.index] ?? rows[rowFocus.index - 1];
+    const control = row?.querySelector('button');
+
+    if (control instanceof HTMLButtonElement) {
+      control.focus();
+    } else {
+      (isRatings ? ratingsHeadingRef.current : watchlistHeadingRef.current)?.focus();
+    }
+
+    setRowFocus(null);
+  }, [rowFocus]);
+
+  // Cancelling removes the focused Cancel button; restore focus to the trigger
+  // that reappears in its place.
+  useEffect(() => {
+    if (confirmingDelete || !restoreDeleteFocus.current) {
+      return;
+    }
+
+    restoreDeleteFocus.current = false;
+    deleteButtonRef.current?.focus();
+  }, [confirmingDelete]);
+
+  async function removeRating(movieId: number, rowIndex: number): Promise<void> {
     setRemoveRatingError(null);
 
     try {
@@ -291,9 +337,10 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     }
 
     await loadDashboard();
+    setRowFocus({ panel: 'ratings', index: rowIndex });
   }
 
-  async function removeFromWatchlist(movieId: number): Promise<void> {
+  async function removeFromWatchlist(movieId: number, rowIndex: number): Promise<void> {
     setWatchlistError(null);
 
     try {
@@ -304,6 +351,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     }
 
     await loadDashboard();
+    setRowFocus({ panel: 'watchlist', index: rowIndex });
   }
 
   /**
@@ -417,6 +465,12 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
 
       {loadFailed && <p className="status status--error">{LOAD_ERROR_MESSAGE}</p>}
 
+      {data === null && !loadFailed && (
+        <p className="status" role="status">
+          Loading your dashboard…
+        </p>
+      )}
+
       {data !== null && (
         <>
           <div className="dashboard__overview">
@@ -482,7 +536,12 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
 
           <div className="dashboard__columns">
             <section className="dashboard__panel" aria-labelledby="dashboard-ratings-heading">
-              <h3 className="dashboard__section-heading" id="dashboard-ratings-heading">
+              <h3
+                className="dashboard__section-heading"
+                id="dashboard-ratings-heading"
+                ref={ratingsHeadingRef}
+                tabIndex={-1}
+              >
                 Rated films
               </h3>
 
@@ -496,8 +555,8 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 </p>
               ) : (
                 <>
-                  <ul className="dashboard__rows" aria-busy={!titlesSettled}>
-                    {previewRatedFilms.map((record) => {
+                  <ul className="dashboard__rows" aria-busy={!titlesSettled} ref={ratingsListRef}>
+                    {previewRatedFilms.map((record, index) => {
                       const title = titleFor(record.movieId);
                       const year = yearFor(record.movieId);
 
@@ -517,7 +576,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                             className="dashboard__remove button--ghost"
                             aria-label={`Remove rating for ${title ?? 'this film'}`}
                             onClick={() => {
-                              void removeRating(record.movieId);
+                              void removeRating(record.movieId, index);
                             }}
                           >
                             ×
@@ -538,7 +597,12 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
             </section>
 
             <section className="dashboard__panel" aria-labelledby="dashboard-watchlist-heading">
-              <h3 className="dashboard__section-heading" id="dashboard-watchlist-heading">
+              <h3
+                className="dashboard__section-heading"
+                id="dashboard-watchlist-heading"
+                ref={watchlistHeadingRef}
+                tabIndex={-1}
+              >
                 Watchlist
               </h3>
 
@@ -550,8 +614,8 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 </p>
               ) : (
                 <>
-                  <ul className="dashboard__rows" aria-busy={!titlesSettled}>
-                    {previewWatchlistIds.map((movieId) => {
+                  <ul className="dashboard__rows" aria-busy={!titlesSettled} ref={watchlistListRef}>
+                    {previewWatchlistIds.map((movieId, index) => {
                       const title = titleFor(movieId);
                       const year = yearFor(movieId);
 
@@ -568,7 +632,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                             className="dashboard__remove button--ghost"
                             aria-label={`Remove ${title ?? 'this film'} from watchlist`}
                             onClick={() => {
-                              void removeFromWatchlist(movieId);
+                              void removeFromWatchlist(movieId, index);
                             }}
                           >
                             ×
@@ -657,6 +721,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                   type="button"
                   className="button--ghost-danger"
                   disabled={dataAction !== null}
+                  ref={deleteButtonRef}
                   onClick={() => {
                     setConfirmingDelete(true);
                   }}
@@ -689,6 +754,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                     className="button--ghost"
                     disabled={dataAction !== null}
                     onClick={() => {
+                      restoreDeleteFocus.current = true;
                       setConfirmingDelete(false);
                     }}
                   >

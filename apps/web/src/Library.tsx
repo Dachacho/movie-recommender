@@ -40,6 +40,13 @@ interface TitleBatch {
   movies: ReadonlyMap<number, MovieCard | null>;
 }
 
+interface RowFocusRequest {
+  /** Tab that owned the removed row; a later tab change drops the request. */
+  tab: 'rated' | 'watchlist';
+  /** Neighbouring row to land on after the removal; null when none existed. */
+  neighborMovieId: number | null;
+}
+
 function TitlePlaceholder() {
   return <span className="title-skeleton" aria-hidden="true" />;
 }
@@ -178,6 +185,9 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
   }));
   const [page, setPage] = useState(0);
   const [writeError, setWriteError] = useState<string | null>(null);
+  const [rowFocus, setRowFocus] = useState<RowFocusRequest | null>(null);
+  const collectionRef = useRef<HTMLUListElement | null>(null);
+  const emptyActionRef = useRef<HTMLAnchorElement | null>(null);
   const searchId = useRef(0);
 
   useEffect(() => {
@@ -278,6 +288,47 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
     };
   }, [movieLookup, page, ratings, tab, watchlistIds]);
 
+  // A removed row takes the focused button with it. Once the new rows render,
+  // land on the next row's control, else the previous row's, else the action
+  // that now stands in for the empty collection. Matching by movie id also
+  // waits for the pager reset when the last row of a later page was removed.
+  // A removal that finishes after a tab change is dropped: the guest already
+  // moved on, so focus must not jump into the new collection.
+  useEffect(() => {
+    if (rowFocus === null) {
+      return;
+    }
+
+    if (rowFocus.tab !== tab) {
+      setRowFocus(null);
+      return;
+    }
+
+    const remaining = rowFocus.tab === 'rated' ? ratings.size : watchlistIds.size;
+
+    if (remaining === 0) {
+      emptyActionRef.current?.focus();
+      setRowFocus(null);
+      return;
+    }
+
+    const neighborId = rowFocus.neighborMovieId;
+
+    if (neighborId === null) {
+      setRowFocus(null);
+      return;
+    }
+
+    const rows = collectionRef.current?.querySelectorAll<HTMLLIElement>('li') ?? [];
+    const row = [...rows].find((item) => item.dataset.movieId === String(neighborId));
+    const control = row?.querySelector('button');
+
+    if (control instanceof HTMLButtonElement) {
+      control.focus();
+      setRowFocus(null);
+    }
+  }, [page, ratings.size, rowFocus, tab, watchlistIds.size]);
+
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -322,7 +373,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
     }
   }
 
-  async function handleClearRating(movieId: number) {
+  async function handleClearRating(movieId: number, neighborMovieId?: number | null) {
     setWriteError(null);
 
     try {
@@ -334,6 +385,12 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
 
         return next;
       });
+
+      // Search-result rows stay mounted, so only a removed collection row
+      // needs the focus hand-off.
+      if (neighborMovieId !== undefined) {
+        setRowFocus({ tab: 'rated', neighborMovieId });
+      }
     } catch {
       setWriteError(WRITE_ERROR_MESSAGE);
     }
@@ -375,12 +432,13 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
     }
   }
 
-  async function handleRemoveFromWatchlist(movieId: number) {
+  async function handleRemoveFromWatchlist(movieId: number, neighborMovieId: number | null) {
     setWriteError(null);
 
     try {
       await profile.removeFromWatchlist(movieId);
       setWatchlistIds((previous) => toggledIds(previous, movieId, false));
+      setRowFocus({ tab: 'watchlist', neighborMovieId });
     } catch {
       setWriteError(WRITE_ERROR_MESSAGE);
     }
@@ -447,20 +505,28 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                 Rate a few films and the picks start to follow your taste.
               </p>
               <div className="library__empty-actions">
-                <a className="button--secondary" href="#library/find">
+                <a className="button--secondary" ref={emptyActionRef} href="#library/find">
                   Find films to rate
                 </a>
               </div>
             </div>
           ) : (
             <>
-              <ul className="library__results" aria-label="Rated films" aria-busy={!titlesSettled}>
-                {visibleRated.map((entry) => {
+              <ul
+                className="library__results"
+                aria-label="Rated films"
+                aria-busy={!titlesSettled}
+                ref={collectionRef}
+              >
+                {visibleRated.map((entry, index) => {
                   const title = titleFor(entry.movieId);
                   const year = yearFor(entry.movieId);
+                  const orderedIndex = page * PAGE_SIZE + index;
+                  const neighborMovieId =
+                    rated[orderedIndex + 1]?.movieId ?? rated[orderedIndex - 1]?.movieId ?? null;
 
                   return (
-                    <li className="library__row" key={entry.movieId}>
+                    <li className="library__row" key={entry.movieId} data-movie-id={entry.movieId}>
                       <div className="library__film">
                         <h3 className="library__title">
                           {title === null ? <TitlePlaceholder /> : title}
@@ -474,7 +540,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                           className="button--ghost"
                           aria-label={`Clear rating for ${title ?? 'this film'}`}
                           onClick={() => {
-                            void handleClearRating(entry.movieId);
+                            void handleClearRating(entry.movieId, neighborMovieId);
                           }}
                         >
                           Clear
@@ -509,7 +575,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
               <p className="library__empty-title">Nothing saved yet.</p>
               <p className="library__empty-copy">Save a film and it stays here for later.</p>
               <div className="library__empty-actions">
-                <a className="button--secondary" href="#library/find">
+                <a className="button--secondary" ref={emptyActionRef} href="#library/find">
                   Find films to save
                 </a>
               </div>
@@ -520,13 +586,17 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                 className="library__results"
                 aria-label="Watchlist films"
                 aria-busy={!titlesSettled}
+                ref={collectionRef}
               >
-                {visibleWatchlist.map((movieId) => {
+                {visibleWatchlist.map((movieId, index) => {
                   const title = titleFor(movieId);
                   const year = yearFor(movieId);
+                  const orderedIndex = page * PAGE_SIZE + index;
+                  const neighborMovieId =
+                    watchlist[orderedIndex + 1] ?? watchlist[orderedIndex - 1] ?? null;
 
                   return (
-                    <li className="library__row" key={movieId}>
+                    <li className="library__row" key={movieId} data-movie-id={movieId}>
                       <div className="library__film">
                         <h3 className="library__title">
                           {title === null ? <TitlePlaceholder /> : title}
@@ -539,7 +609,7 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                           className="button--ghost"
                           aria-label={`Remove ${title ?? 'this film'} from watchlist`}
                           onClick={() => {
-                            void handleRemoveFromWatchlist(movieId);
+                            void handleRemoveFromWatchlist(movieId, neighborMovieId);
                           }}
                         >
                           Remove
@@ -619,8 +689,16 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
             </div>
           )}
 
-          {search.status === 'error' && <p className="status status--error">{search.message}</p>}
-          {search.status === 'pending' && <p className="status">Searching the catalog…</p>}
+          {search.status === 'error' && (
+            <p className="status status--error" role="alert">
+              {search.message}
+            </p>
+          )}
+          {search.status === 'pending' && (
+            <p className="status" role="status">
+              Searching the catalog…
+            </p>
+          )}
 
           {search.status === 'results' &&
             (search.movies.length === 0 ? (

@@ -554,6 +554,90 @@ describe('Dashboard', () => {
     await expect(profile.getWatchlistIds()).resolves.toEqual([3]);
   });
 
+  it('moves focus to the next rating after removing one', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW },
+      { movieId: MOONLIGHT.id, rating: 3, updatedAt: NOW - 1 },
+      { movieId: HEAT.id, rating: 4, updatedAt: NOW - 2 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT]));
+
+    const removeArrival = await screen.findByRole('button', { name: 'Remove rating for Arrival' });
+    removeArrival.focus();
+    fireEvent.click(removeArrival);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove rating for Moonlight' }),
+      ),
+    );
+  });
+
+  it('moves focus to the previous rating after removing the last row', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW },
+      { movieId: MOONLIGHT.id, rating: 3, updatedAt: NOW - 1 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
+
+    const removeMoonlight = await screen.findByRole('button', {
+      name: 'Remove rating for Moonlight',
+    });
+    removeMoonlight.focus();
+    fireEvent.click(removeMoonlight);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove rating for Arrival' }),
+      ),
+    );
+  });
+
+  it('moves focus to the rated heading when the last rating is removed', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([{ movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW }]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL]));
+
+    const removeArrival = await screen.findByRole('button', { name: 'Remove rating for Arrival' });
+    removeArrival.focus();
+    fireEvent.click(removeArrival);
+
+    await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.');
+
+    const heading = screen.getByRole('heading', { name: 'Rated films' });
+
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
+  it('moves focus to the next watchlist row after removing one', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedWatchlist([
+      { movieId: HEAT.id, addedAt: NOW },
+      { movieId: PADDINGTON_2.id, addedAt: NOW },
+    ]);
+
+    renderDashboard(profile, fakeLookup([HEAT, PADDINGTON_2]));
+
+    const removeHeat = await screen.findByRole('button', { name: 'Remove Heat from watchlist' });
+    removeHeat.focus();
+    fireEvent.click(removeHeat);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Paddington 2 from watchlist' }),
+      ),
+    );
+  });
+
   it('shows history timestamps, sources, prompts, kinds and picks', async () => {
     const { profile, storage } = createProfile();
 
@@ -705,6 +789,21 @@ describe('Dashboard', () => {
     expect(screen.queryByText('Replaced Newer Arrival')).toBeNull();
     expect(screen.queryByText('Replaced Oldest Arrival')).toBeNull();
     expect(screen.getByText('Newer Arrival')).toBeTruthy();
+  });
+
+  it('shows a quiet loading status until the profile data resolves', async () => {
+    const { profile } = createProfile();
+
+    renderDashboard(profile, fakeLookup([]));
+
+    const loading = screen.getByText('Loading your dashboard…');
+
+    expect(loading.getAttribute('role')).toBe('status');
+
+    expect(
+      await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('Loading your dashboard…')).toBeNull();
   });
 
   it('shows the three empty states for a new guest', async () => {
@@ -972,6 +1071,7 @@ describe('Dashboard your data', () => {
     expect(screen.queryByText(/This deletes your ratings/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete everything' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Delete profile' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete profile' }));
     await expect(profile.getRatings()).resolves.toHaveLength(1);
   });
 

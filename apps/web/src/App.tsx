@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type Ref } from 'react';
 import type { LetterboxdUnmatched, MovieCard } from '@movie-recommender/shared';
 import {
   RecommendationApiError,
@@ -66,6 +66,9 @@ type ActionState =
   | { status: 'pending'; kind: 'replace'; index: number }
   | { status: 'pending'; kind: 'refresh' }
   | { status: 'error'; message: string };
+
+/** Where focus lands after the acted-on pick or the whole round is replaced. */
+type PickFocusRequest = { target: 'pick'; index: number } | { target: 'results' };
 
 interface TasteCache {
   version: number;
@@ -357,15 +360,24 @@ interface RejectButtonProps {
   pending: boolean;
   onReject: () => void;
   ghost?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
 }
 
-function RejectButton({ title, disabled, pending, onReject, ghost = false }: RejectButtonProps) {
+function RejectButton({
+  title,
+  disabled,
+  pending,
+  onReject,
+  ghost = false,
+  buttonRef,
+}: RejectButtonProps) {
   return (
     <button
       type="button"
       className={`pick-action${ghost ? ' pick-action--ghost' : ''}`}
       aria-label={`${title}: not tonight`}
       disabled={disabled}
+      ref={buttonRef}
       onClick={onReject}
     >
       {pending ? 'Finding another…' : 'Not tonight'}
@@ -378,9 +390,10 @@ interface MainPickProps {
   disabled: boolean;
   pending: boolean;
   onReject: () => void;
+  actionRef?: Ref<HTMLButtonElement>;
 }
 
-function MainPick({ movie, disabled, pending, onReject }: MainPickProps) {
+function MainPick({ movie, disabled, pending, onReject, actionRef }: MainPickProps) {
   const facts = [
     movie.releaseYear === null ? null : String(movie.releaseYear),
     movie.director === null ? null : `Directed by ${movie.director}`,
@@ -405,6 +418,7 @@ function MainPick({ movie, disabled, pending, onReject }: MainPickProps) {
             disabled={disabled}
             pending={pending}
             onReject={onReject}
+            {...(actionRef === undefined ? {} : { buttonRef: actionRef })}
           />
         </div>
       </div>
@@ -419,9 +433,17 @@ interface AlternativesProps {
   disabled: boolean;
   pendingIndex: number | null;
   onReject: (index: number) => void;
+  registerAction: (index: number, element: HTMLButtonElement | null) => void;
 }
 
-function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: AlternativesProps) {
+function Alternatives({
+  movies,
+  startIndex,
+  disabled,
+  pendingIndex,
+  onReject,
+  registerAction,
+}: AlternativesProps) {
   if (movies.length === 0) {
     return null;
   }
@@ -452,6 +474,9 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
                     pending={pendingIndex === index}
                     onReject={() => onReject(index)}
                     ghost
+                    buttonRef={(element) => {
+                      registerAction(index, element);
+                    }}
                   />
                 </div>
               </div>
@@ -481,6 +506,9 @@ export function App({ profile: providedProfile }: AppProps = {}) {
   const [poolTrimmed, setPoolTrimmed] = useState(false);
   const requestId = useRef(0);
   const tasteCache = useRef<TasteCache | null>(null);
+  const pickActionRefs = useRef(new Map<number, HTMLButtonElement>());
+  const resultsRef = useRef<HTMLElement | null>(null);
+  const [pickFocusRequest, setPickFocusRequest] = useState<PickFocusRequest | null>(null);
 
   const actionPending = action.status === 'pending';
   const pending = state.status === 'pending';
@@ -517,6 +545,41 @@ export function App({ profile: providedProfile }: AppProps = {}) {
     focusMainOnNavigation.current = false;
     document.getElementById('main-content')?.focus();
   }, [route]);
+
+  // Replacements and refreshes rebuild the pick the guest acted on. Only
+  // those user actions request this focus move; the first round must leave
+  // focus where it was. Unmounted actions drop out of the map via the null
+  // ref callback. When the acted-on slot produced no pick, the results region
+  // carries the empty/status message and receives focus instead of a
+  // different, shifted pick.
+  useEffect(() => {
+    if (pickFocusRequest === null) {
+      return;
+    }
+
+    if (pickFocusRequest.target === 'results') {
+      resultsRef.current?.focus();
+    } else {
+      const action = pickActionRefs.current.get(pickFocusRequest.index);
+
+      if (action === undefined) {
+        resultsRef.current?.focus();
+      } else {
+        action.focus();
+      }
+    }
+
+    setPickFocusRequest(null);
+  }, [pickFocusRequest]);
+
+  function registerPickAction(index: number, element: HTMLButtonElement | null): void {
+    if (element === null) {
+      pickActionRefs.current.delete(index);
+      return;
+    }
+
+    pickActionRefs.current.set(index, element);
+  }
 
   function handleSourceChange(next: RecommendationSourceKind): void {
     setSourceKind(next);
@@ -730,6 +793,9 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           : previous,
       );
       setAction({ status: 'idle' });
+      setPickFocusRequest(
+        response.movies.length === 0 ? { target: 'results' } : { target: 'pick', index },
+      );
       await rememberRound(profile, {
         kind: 'replace',
         source: round.intent.source,
@@ -795,6 +861,9 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         round: { ...round, movies: response.movies },
       });
       setAction({ status: 'idle' });
+      setPickFocusRequest(
+        response.movies.length === 0 ? { target: 'results' } : { target: 'pick', index: 0 },
+      );
       await rememberRound(profile, {
         kind: 'refresh',
         source: round.intent.source,
@@ -1004,7 +1073,13 @@ export function App({ profile: providedProfile }: AppProps = {}) {
           </p>
         </form>
 
-        <section className="results" aria-live="polite" aria-busy={controlsDisabled}>
+        <section
+          className="results"
+          aria-live="polite"
+          aria-busy={controlsDisabled}
+          ref={resultsRef}
+          tabIndex={-1}
+        >
           {pending && <p className="status status--pending">Finding something worth watching…</p>}
 
           {state.status === 'error' && <p className="status status--error">{state.message}</p>}
@@ -1048,6 +1123,9 @@ export function App({ profile: providedProfile }: AppProps = {}) {
                       movie={state.round.movies[0]}
                       disabled={controlsDisabled}
                       pending={pendingReplaceIndex === 0}
+                      actionRef={(element) => {
+                        registerPickAction(0, element);
+                      }}
                       onReject={() => {
                         void handleReplace(0);
                       }}
@@ -1058,6 +1136,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
                     startIndex={1}
                     disabled={controlsDisabled}
                     pendingIndex={pendingReplaceIndex}
+                    registerAction={registerPickAction}
                     onReject={(index) => {
                       void handleReplace(index);
                     }}

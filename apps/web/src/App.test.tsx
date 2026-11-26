@@ -1168,6 +1168,128 @@ describe('App', () => {
     await expect(profile.getActiveCooldownIds()).resolves.toEqual([1, 2, 3, 4]);
   });
 
+  it('moves focus to the replaced pick, never to the main pick on the first round', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2], coldStart: false }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ movies: [SICARIO], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [THE_LIGHTHOUSE], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [MOONLIGHT], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('article', { name: 'Main pick' });
+
+    expect(document.activeElement).toBe(document.body);
+
+    // Replacing an alternative must land on the new alternative, while the
+    // main pick stays untouched.
+    fireEvent.click(screen.getByRole('button', { name: 'Moonlight: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'Sicario' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Arrival' })).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Sicario: not tonight' }),
+      ),
+    );
+    expect(document.activeElement).not.toBe(
+      screen.getByRole('button', { name: 'Arrival: not tonight' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    expect(await screen.findByRole('heading', { name: 'The Lighthouse' })).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'The Lighthouse: not tonight' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(await screen.findByRole('heading', { name: 'Moonlight' })).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Moonlight: not tonight' }),
+      ),
+    );
+  });
+
+  it('falls back to the results region when a replacement removes the acted-on pick', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, MOONLIGHT, HEAT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Arrival: not tonight' })).toBeNull(),
+    );
+
+    const results = document.querySelector('.results');
+    const shiftedPick = screen.getByRole('button', { name: 'Moonlight: not tonight' });
+
+    expect(results).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(results));
+    expect(document.activeElement).not.toBe(shiftedPick);
+  });
+
+  it('falls back to the results region when the only pick is replaced with nothing', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('article', { name: 'Main pick' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrival: not tonight' }));
+
+    const message = await screen.findByText('No picks tonight. Try a different direction.');
+    const results = message.closest('section');
+
+    expect(results).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(results));
+    expect(screen.queryByRole('button', { name: /not tonight/i })).toBeNull();
+  });
+
+  it('falls back to the results region when refresh all returns no picks', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ movies: [ARRIVAL, MOONLIGHT], coldStart: false }))
+      .mockResolvedValueOnce(jsonResponse({ movies: [], coldStart: false }));
+
+    renderApp(profile);
+    await submitPrompt('');
+    await screen.findByRole('list', { name: 'Alternatives' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    const message = await screen.findByText('No picks tonight. Try a different direction.');
+    const results = message.closest('section');
+
+    expect(results).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(results));
+    expect(screen.queryByRole('button', { name: /not tonight/i })).toBeNull();
+  });
+
   it('excludes films rated or watched after the round from a replacement', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();

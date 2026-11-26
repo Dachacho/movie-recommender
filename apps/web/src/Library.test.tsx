@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { LetterboxdImportResponse, MovieCard } from '@movie-recommender/shared';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { Library, type LibraryTab } from './Library';
@@ -712,6 +712,44 @@ describe('Library idle state', () => {
   });
 });
 
+describe('Library search announcements', () => {
+  it('announces a pending search in a single polite status region', () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
+
+    renderLibrary();
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const pending = screen.getByText('Searching the catalog…');
+    expect(pending.getAttribute('role')).toBe('status');
+    expect(
+      screen
+        .getAllByRole('status')
+        .filter((element) => element.textContent?.includes('Searching the catalog…')),
+    ).toHaveLength(1);
+  });
+
+  it('announces a failed search as an alert', async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    renderLibrary();
+    fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+      target: { value: 'heat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const alert = await screen.findByRole('alert');
+
+    expect(alert.textContent).toContain('Could not reach the recommendation service.');
+    expect(screen.queryByText('Searching the catalog…')).toBeNull();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+});
+
 describe('Library collection tabs', () => {
   it('lists rated films by rating then movieId and clears a rating in place', async () => {
     const profile = createProfile();
@@ -812,6 +850,164 @@ describe('Library collection tabs', () => {
 
     expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Remove Film 1 from watchlist' })).toBeTruthy();
+  });
+
+  it('moves focus to the next row after clearing a rating', async () => {
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+    await profile.setRating(2, 4);
+    await profile.setRating(3, 4);
+
+    renderLibrary(profile, 'rated', fakeLookup([movieCard(1), movieCard(2), movieCard(3)]));
+
+    await screen.findByText('Film 1');
+
+    const clearFirst = screen.getByRole('button', { name: 'Clear rating for Film 1' });
+    clearFirst.focus();
+    fireEvent.click(clearFirst);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Clear rating for Film 2' }),
+      ),
+    );
+  });
+
+  it('moves focus to the previous row after clearing the last rating', async () => {
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+    await profile.setRating(2, 4);
+
+    renderLibrary(profile, 'rated', fakeLookup([movieCard(1), movieCard(2)]));
+
+    await screen.findByText('Film 2');
+
+    const clearLast = screen.getByRole('button', { name: 'Clear rating for Film 2' });
+    clearLast.focus();
+    fireEvent.click(clearLast);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Clear rating for Film 1' }),
+      ),
+    );
+  });
+
+  it('returns focus to the previous row when the last row of a later page disappears', async () => {
+    const profile = createProfile();
+    const cards = Array.from({ length: 13 }, (_value, index) => movieCard(index + 1));
+
+    for (const card of cards) {
+      await profile.setRating(card.id, 4);
+    }
+
+    renderLibrary(profile, 'rated', fakeLookup(cards));
+
+    const list = await screen.findByRole('list', { name: 'Rated films' });
+
+    expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Page 2 of 2')).toBeTruthy();
+    await within(list).findByText('Film 13');
+
+    const clearLast = within(list).getByRole('button', { name: 'Clear rating for Film 13' });
+    clearLast.focus();
+    fireEvent.click(clearLast);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Clear rating for Film 12' }),
+      ),
+    );
+  });
+
+  it('moves focus to the empty-state action after clearing the only rating', async () => {
+    const profile = createProfile();
+
+    await profile.setRating(1, 4);
+
+    renderLibrary(profile, 'rated', fakeLookup([movieCard(1)]));
+
+    const clearOnly = await screen.findByRole('button', { name: 'Clear rating for Film 1' });
+    clearOnly.focus();
+    fireEvent.click(clearOnly);
+
+    const emptyAction = await screen.findByRole('link', { name: 'Find films to rate' });
+    await waitFor(() => expect(document.activeElement).toBe(emptyAction));
+  });
+
+  it('moves focus to the next row after removing a watchlist film', async () => {
+    const profile = createProfile();
+
+    await profile.addToWatchlist(1);
+    await profile.addToWatchlist(3);
+
+    renderLibrary(profile, 'watchlist', fakeLookup([movieCard(1), movieCard(3)]));
+
+    await screen.findByText('Film 1');
+
+    const removeFirst = screen.getByRole('button', { name: 'Remove Film 1 from watchlist' });
+    removeFirst.focus();
+    fireEvent.click(removeFirst);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Film 3 from watchlist' }),
+      ),
+    );
+  });
+
+  it('drops a removal focus request when the removal finishes after a tab change', async () => {
+    const profile = createProfile();
+    const lookup = fakeLookup([movieCard(1), movieCard(2)]);
+
+    await profile.setRating(1, 4);
+    await profile.setRating(2, 4);
+    await profile.addToWatchlist(2);
+
+    let finishRemoval: (() => void) | undefined;
+
+    vi.spyOn(profile, 'removeRating').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRemoval = resolve;
+        }),
+    );
+
+    const view = render(<Library profile={profile} tab="rated" lookup={lookup} />);
+
+    await screen.findByText('Film 1');
+
+    const clearFirst = screen.getByRole('button', { name: 'Clear rating for Film 1' });
+    clearFirst.focus();
+    fireEvent.click(clearFirst);
+
+    // The new tab contains the neighbour's movie id, which the old hand-off
+    // would have matched if the request were applied across tabs.
+    view.rerender(<Library profile={profile} tab="watchlist" lookup={lookup} />);
+
+    const newTabControl = await screen.findByRole('button', {
+      name: 'Remove Film 2 from watchlist',
+    });
+
+    await act(async () => {
+      finishRemoval?.();
+    });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).not.toBe(newTabControl);
+
+    // The request was cleared, not merely deferred: returning to the rated
+    // tab must not focus the surviving row either.
+    view.rerender(<Library profile={profile} tab="rated" lookup={lookup} />);
+
+    const clearSecond = await screen.findByRole('button', { name: 'Clear rating for Film 2' });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).not.toBe(clearSecond);
   });
 
   it('paginates twelve films per page and advances with Next', async () => {
