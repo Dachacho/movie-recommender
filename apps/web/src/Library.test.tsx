@@ -330,7 +330,7 @@ describe('Letterboxd import', () => {
     selectFile(fileWithText(CSV_TEXT));
 
     expect(
-      await screen.findByText('Could not save the imported films to your library. Try again.'),
+      await screen.findByText('Saved 1 film from this file before the save failed. Try again.'),
     ).toBeTruthy();
     expect(screen.queryByText(/^Imported /)).toBeNull();
     expect(importInput().disabled).toBe(false);
@@ -340,6 +340,82 @@ describe('Letterboxd import', () => {
       (await profile.getRatings()).map(({ movieId, rating }) => ({ movieId, rating })),
     ).toEqual([{ movieId: 11, rating: 4 }]);
     await expect(profile.getWatchedIds()).resolves.toEqual([]);
+  });
+
+  it('announces the import summary in a polite live region', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    fetchMock.mockResolvedValue(jsonResponse(IMPORT_RESPONSE));
+
+    renderLibrary(profile);
+    selectFile(fileWithText(CSV_TEXT));
+
+    const summary = await screen.findByText('Imported 2 ratings and 1 watching.');
+    const liveRegion = summary.closest('[role="status"]');
+
+    expect(liveRegion).not.toBeNull();
+    expect(liveRegion?.getAttribute('aria-live')).toBe('polite');
+    expect(liveRegion?.textContent).toContain('Imported 2 ratings and 1 watching.');
+  });
+
+  it('reports how many watchlist films were saved before a save failure', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const originalAddToWatchlist = profile.addToWatchlist.bind(profile);
+    const watchlistCsv =
+      'Date,Name,Year,Letterboxd URI\n2024-01-04,Heat,1995,\n2024-01-04,Moonlight,2016,';
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [
+          { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
+          { movieId: 13, title: 'Moonlight', releaseYear: 2016, rating: null },
+        ],
+        unmatched: [],
+        stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+      }),
+    );
+    vi.spyOn(profile, 'addToWatchlist').mockImplementation(async (movieId) => {
+      if (movieId === 13) {
+        throw new Error('Quota exceeded');
+      }
+
+      return originalAddToWatchlist(movieId);
+    });
+
+    renderLibrary(profile);
+    selectFile(fileWithText(watchlistCsv, 'watchlist.csv'));
+
+    const failure = await screen.findByText(
+      'Saved 1 film from this file before the save failed. Try again.',
+    );
+
+    expect(failure.closest('[role="status"]')).not.toBeNull();
+    expect(screen.queryByText(/^Added /)).toBeNull();
+    await expect(profile.getWatchlistIds()).resolves.toEqual([12]);
+  });
+
+  it('reports the generic save error when no film was saved', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [{ movieId: 13, title: 'Moonlight', releaseYear: 2016, rating: null }],
+        unmatched: [],
+        stats: { rows: 1, matched: 1, unmatched: 0, invalid: 0 },
+      }),
+    );
+    vi.spyOn(profile, 'setWatched').mockRejectedValue(new Error('Quota exceeded'));
+
+    renderLibrary(profile);
+    selectFile(fileWithText(CSV_TEXT));
+
+    const failure = await screen.findByText(
+      'Could not save the imported films to your library. Try again.',
+    );
+
+    expect(failure.closest('[role="status"]')).not.toBeNull();
+    expect(screen.queryByText(/^Saved /)).toBeNull();
   });
 
   it('adds a watchlist export to the guest watchlist instead of marking films watched', async () => {

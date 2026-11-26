@@ -35,6 +35,14 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /**
+ * Writes that completed before a save failure remain in the profile, so the
+ * failure must say how many films were kept instead of implying none were.
+ */
+function saveFailureMessage(saved: number): string {
+  return `Saved ${saved} ${plural(saved, 'film', 'films')} from this file before the save failed. Try again.`;
+}
+
+/**
  * One sentence over every file that imported successfully. Ratings and
  * watches are reported as an import; watchlist films are reported separately
  * because they are not watched and must not read like it. Files that failed
@@ -154,7 +162,10 @@ export function LetterboxdImport({
         }
       } catch {
         // Earlier successful writes stay; only this file is reported failed.
-        failures.push(WRITE_ERROR_MESSAGE);
+        // Name their number so the message does not imply the whole file was lost.
+        const saved = ratings + watchings + watchlisted;
+
+        failures.push(saved === 0 ? WRITE_ERROR_MESSAGE : saveFailureMessage(saved));
         continue;
       }
 
@@ -187,9 +198,9 @@ export function LetterboxdImport({
 
       {pending && <p className="status import__status">Matching your films against the catalog…</p>}
 
-      {state.status === 'done' && (
-        <div className="import__report">
-          {state.results.length > 0 && (
+      <div className="import__report">
+        <div role="status" aria-live="polite" aria-atomic="false">
+          {state.status === 'done' && state.results.length > 0 && (
             <p className="status import__status">
               {state.results.every((result) => result.report.matched.length === 0)
                 ? EMPTY_REPORT_MESSAGE
@@ -197,29 +208,29 @@ export function LetterboxdImport({
             </p>
           )}
 
-          {state.failures.map((message, index) => (
-            <p className="status status--error import__status" key={`${index}:${message}`}>
-              {message}
-            </p>
-          ))}
-
-          {unmatched.length > 0 && (
-            <details className="import__unmatched">
-              <summary>
-                Not in the catalog:{' '}
-                {unmatched.length === 1 ? '1 film' : `${unmatched.length} films`}
-              </summary>
-              <ul className="import__list">
-                {unmatched.map((row) => (
-                  <li key={unmatchedKey(row.name, row.year)}>
-                    {row.year === null ? row.name : `${row.name} (${row.year})`}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          {state.status === 'done' &&
+            state.failures.map((message, index) => (
+              <p className="status status--error import__status" key={`${index}:${message}`}>
+                {message}
+              </p>
+            ))}
         </div>
-      )}
+
+        {state.status === 'done' && unmatched.length > 0 && (
+          <details className="import__unmatched">
+            <summary>
+              Not in the catalog: {unmatched.length === 1 ? '1 film' : `${unmatched.length} films`}
+            </summary>
+            <ul className="import__list">
+              {unmatched.map((row) => (
+                <li key={unmatchedKey(row.name, row.year)}>
+                  {row.year === null ? row.name : `${row.name} (${row.year})`}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
     </div>
   );
 }
