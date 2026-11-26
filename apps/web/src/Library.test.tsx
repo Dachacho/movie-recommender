@@ -127,7 +127,7 @@ describe('Letterboxd import', () => {
     ).toBeTruthy();
     selectFile(fileWithText(CSV_TEXT));
 
-    expect(await screen.findByText('Imported 2 ratings and 1 watching.')).toBeTruthy();
+    expect(await screen.findByText('Imported 2 ratings and marked 1 film watched.')).toBeTruthy();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/imports/letterboxd');
@@ -150,6 +150,54 @@ describe('Letterboxd import', () => {
     expect(screen.getByText('The Long Goodbye (1973)')).toBeTruthy();
 
     expect(importInput().disabled).toBe(false);
+  });
+
+  it('reports a ratings-only import without a watches clause', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const ratingsCsv =
+      'Date,Name,Year,Letterboxd URI,Rating\n2024-01-01,Arrival,2016,,4.5\n2024-01-02,Heat,1995,,3';
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [
+          { movieId: 11, title: 'Arrival', releaseYear: 2016, rating: 4.5 },
+          { movieId: 12, title: 'Heat', releaseYear: 1995, rating: 3 },
+        ],
+        unmatched: [],
+        stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+      }),
+    );
+
+    renderLibrary(profile);
+    selectFile(fileWithText(ratingsCsv, 'ratings.csv'));
+
+    expect(await screen.findByText('Imported 2 ratings.')).toBeTruthy();
+    await expect(profile.getWatchedIds()).resolves.toEqual([]);
+  });
+
+  it('uses a plural film count for a watches-only import', async () => {
+    const fetchMock = stubFetch();
+    const profile = createProfile();
+    const watchesCsv =
+      'Date,Name,Year,Letterboxd URI\n2024-01-01,Heat,1995,\n2024-01-02,Moonlight,2016,';
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        matched: [
+          { movieId: 12, title: 'Heat', releaseYear: 1995, rating: null },
+          { movieId: 13, title: 'Moonlight', releaseYear: 2016, rating: null },
+        ],
+        unmatched: [],
+        stats: { rows: 2, matched: 2, unmatched: 0, invalid: 0 },
+      }),
+    );
+
+    renderLibrary(profile);
+    selectFile(fileWithText(watchesCsv, 'watches.csv'));
+
+    expect(await screen.findByText('Marked 2 films watched.')).toBeTruthy();
+    await expect(profile.getWatchedIds()).resolves.toEqual([12, 13]);
   });
 
   it('reflects an imported rating in search results without a new search', async () => {
@@ -185,7 +233,7 @@ describe('Letterboxd import', () => {
 
     selectFile(fileWithText(CSV_TEXT));
 
-    expect(await screen.findByText('Imported 1 rating and 0 watchings.')).toBeTruthy();
+    expect(await screen.findByText('Imported 1 rating.')).toBeTruthy();
     await waitFor(() => {
       const updatedGroup = screen.getByRole('radiogroup', { name: 'Rating for Heat' });
       const threeAndAHalfStars = within(updatedGroup).getByRole('radio', {
@@ -350,12 +398,12 @@ describe('Letterboxd import', () => {
     renderLibrary(profile);
     selectFile(fileWithText(CSV_TEXT));
 
-    const summary = await screen.findByText('Imported 2 ratings and 1 watching.');
+    const summary = await screen.findByText('Imported 2 ratings and marked 1 film watched.');
     const liveRegion = summary.closest('[role="status"]');
 
     expect(liveRegion).not.toBeNull();
     expect(liveRegion?.getAttribute('aria-live')).toBe('polite');
-    expect(liveRegion?.textContent).toContain('Imported 2 ratings and 1 watching.');
+    expect(liveRegion?.textContent).toContain('Imported 2 ratings and marked 1 film watched.');
   });
 
   it('reports how many watchlist films were saved before a save failure', async () => {
@@ -465,7 +513,7 @@ describe('Letterboxd import', () => {
     renderLibrary(profile);
     selectFile(fileWithText(watchesCsv, 'watches.csv'));
 
-    expect(await screen.findByText('Imported 0 ratings and 1 watching.')).toBeTruthy();
+    expect(await screen.findByText('Marked 1 film watched.')).toBeTruthy();
     await expect(profile.getWatchedIds()).resolves.toEqual([12]);
     await expect(profile.getRatings()).resolves.toEqual([]);
     await expect(profile.getWatchlistIds()).resolves.toEqual([]);
@@ -531,7 +579,7 @@ describe('Letterboxd import', () => {
 
     expect(
       await screen.findByText(
-        'Imported 2 ratings and 1 watching; added 2 films to your watchlist.',
+        'Imported 2 ratings and marked 1 film watched; added 2 films to your watchlist.',
       ),
     ).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -624,7 +672,7 @@ describe('Letterboxd import', () => {
     );
   });
 
-  it('clears a rating from its search row', async () => {
+  it('removes a rating from its search row', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();
 
@@ -637,11 +685,11 @@ describe('Letterboxd import', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
-    const clearRating = await screen.findByRole('button', { name: 'Clear rating for Heat' });
+    const clearRating = await screen.findByRole('button', { name: 'Remove rating for Heat' });
     fireEvent.click(clearRating);
 
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Clear rating for Heat' })).toBeNull(),
+      expect(screen.queryByRole('button', { name: 'Remove rating for Heat' })).toBeNull(),
     );
     await expect(profile.getRatings()).resolves.toEqual([]);
   });
@@ -751,7 +799,7 @@ describe('Library search announcements', () => {
 });
 
 describe('Library collection tabs', () => {
-  it('lists rated films by rating then movieId and clears a rating in place', async () => {
+  it('lists rated films by rating then movieId and removes a rating in place', async () => {
     const profile = createProfile();
     const lookup = fakeLookup([movieCard(1), movieCard(2), movieCard(3)]);
 
@@ -773,10 +821,10 @@ describe('Library collection tabs', () => {
     expect(within(list).getAllByText('4 / 5')).toHaveLength(2);
     expect(within(list).getByText('1991')).toBeTruthy();
 
-    fireEvent.click(within(list).getByRole('button', { name: 'Clear rating for Film 1' }));
+    fireEvent.click(within(list).getByRole('button', { name: 'Remove rating for Film 1' }));
 
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Clear rating for Film 1' })).toBeNull(),
+      expect(screen.queryByRole('button', { name: 'Remove rating for Film 1' })).toBeNull(),
     );
 
     const tabs = screen.getByRole('navigation', { name: 'Library sections' });
@@ -790,7 +838,7 @@ describe('Library collection tabs', () => {
     ]);
   });
 
-  it('shows the write error and keeps the rated row when clearing fails', async () => {
+  it('shows the write error and keeps the rated row when removal fails', async () => {
     const profile = createProfile();
 
     await profile.setRating(1, 4);
@@ -798,10 +846,10 @@ describe('Library collection tabs', () => {
 
     renderLibrary(profile, 'rated', fakeLookup([movieCard(1)]));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear rating for Film 1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove rating for Film 1' }));
 
     expect(await screen.findByText('Could not save your library change. Try again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Clear rating for Film 1' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Remove rating for Film 1' })).toBeTruthy();
   });
 
   it('lists watchlist films by id and removes one in place', async () => {
@@ -852,7 +900,7 @@ describe('Library collection tabs', () => {
     expect(screen.getByRole('button', { name: 'Remove Film 1 from watchlist' })).toBeTruthy();
   });
 
-  it('moves focus to the next row after clearing a rating', async () => {
+  it('moves focus to the next row after removing a rating', async () => {
     const profile = createProfile();
 
     await profile.setRating(1, 4);
@@ -863,18 +911,18 @@ describe('Library collection tabs', () => {
 
     await screen.findByText('Film 1');
 
-    const clearFirst = screen.getByRole('button', { name: 'Clear rating for Film 1' });
+    const clearFirst = screen.getByRole('button', { name: 'Remove rating for Film 1' });
     clearFirst.focus();
     fireEvent.click(clearFirst);
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Clear rating for Film 2' }),
+        screen.getByRole('button', { name: 'Remove rating for Film 2' }),
       ),
     );
   });
 
-  it('moves focus to the previous row after clearing the last rating', async () => {
+  it('moves focus to the previous row after removing the last rating', async () => {
     const profile = createProfile();
 
     await profile.setRating(1, 4);
@@ -884,13 +932,13 @@ describe('Library collection tabs', () => {
 
     await screen.findByText('Film 2');
 
-    const clearLast = screen.getByRole('button', { name: 'Clear rating for Film 2' });
+    const clearLast = screen.getByRole('button', { name: 'Remove rating for Film 2' });
     clearLast.focus();
     fireEvent.click(clearLast);
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Clear rating for Film 1' }),
+        screen.getByRole('button', { name: 'Remove rating for Film 1' }),
       ),
     );
   });
@@ -913,25 +961,25 @@ describe('Library collection tabs', () => {
     expect(await screen.findByText('Page 2 of 2')).toBeTruthy();
     await within(list).findByText('Film 13');
 
-    const clearLast = within(list).getByRole('button', { name: 'Clear rating for Film 13' });
+    const clearLast = within(list).getByRole('button', { name: 'Remove rating for Film 13' });
     clearLast.focus();
     fireEvent.click(clearLast);
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Clear rating for Film 12' }),
+        screen.getByRole('button', { name: 'Remove rating for Film 12' }),
       ),
     );
   });
 
-  it('moves focus to the empty-state action after clearing the only rating', async () => {
+  it('moves focus to the empty-state action after removing the only rating', async () => {
     const profile = createProfile();
 
     await profile.setRating(1, 4);
 
     renderLibrary(profile, 'rated', fakeLookup([movieCard(1)]));
 
-    const clearOnly = await screen.findByRole('button', { name: 'Clear rating for Film 1' });
+    const clearOnly = await screen.findByRole('button', { name: 'Remove rating for Film 1' });
     clearOnly.focus();
     fireEvent.click(clearOnly);
 
@@ -981,7 +1029,7 @@ describe('Library collection tabs', () => {
 
     await screen.findByText('Film 1');
 
-    const clearFirst = screen.getByRole('button', { name: 'Clear rating for Film 1' });
+    const clearFirst = screen.getByRole('button', { name: 'Remove rating for Film 1' });
     clearFirst.focus();
     fireEvent.click(clearFirst);
 
@@ -1004,7 +1052,7 @@ describe('Library collection tabs', () => {
     // tab must not focus the surviving row either.
     view.rerender(<Library profile={profile} tab="rated" lookup={lookup} />);
 
-    const clearSecond = await screen.findByRole('button', { name: 'Clear rating for Film 2' });
+    const clearSecond = await screen.findByRole('button', { name: 'Remove rating for Film 2' });
 
     expect(document.activeElement).toBe(document.body);
     expect(document.activeElement).not.toBe(clearSecond);

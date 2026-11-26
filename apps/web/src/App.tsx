@@ -962,7 +962,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
           {sourceKind === 'paste' && (
             <section className="list-paste" aria-label="Pasted list">
-              <label htmlFor="list-paste">Paste a list — one film per line</label>
+              <label htmlFor="list-paste">Paste a list</label>
               <textarea
                 id="list-paste"
                 name="pasted-list"

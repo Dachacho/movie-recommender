@@ -538,12 +538,12 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                         <button
                           type="button"
                           className="button--ghost"
-                          aria-label={`Clear rating for ${title ?? 'this film'}`}
+                          aria-label={`Remove rating for ${title ?? 'this film'}`}
                           onClick={() => {
                             void handleClearRating(entry.movieId, neighborMovieId);
                           }}
                         >
-                          Clear
+                          Remove rating
                         </button>
                       </div>
                     </li>
@@ -759,12 +759,12 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
                               <button
                                 type="button"
                                 className="button--ghost"
-                                aria-label={`Clear rating for ${movie.title}`}
+                                aria-label={`Remove rating for ${movie.title}`}
                                 onClick={() => {
                                   void handleClearRating(movie.id);
                                 }}
                               >
-                                Clear
+                                Remove rating
                               </button>
                             )}
                           </div>

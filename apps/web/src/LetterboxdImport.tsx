@@ -61,11 +61,17 @@ function importSummary(results: readonly FileImportResult[]): string {
 
   if (totals.ratings > 0 || totals.watchings > 0) {
     const ratingWord = plural(totals.ratings, 'rating', 'ratings');
-    const watchingWord = plural(totals.watchings, 'watching', 'watchings');
+    const filmWord = plural(totals.watchings, 'film', 'films');
 
-    clauses.push(
-      `Imported ${totals.ratings} ${ratingWord} and ${totals.watchings} ${watchingWord}`,
-    );
+    if (totals.ratings > 0 && totals.watchings > 0) {
+      clauses.push(
+        `Imported ${totals.ratings} ${ratingWord} and marked ${totals.watchings} ${filmWord} watched`,
+      );
+    } else if (totals.ratings > 0) {
+      clauses.push(`Imported ${totals.ratings} ${ratingWord}`);
+    } else {
+      clauses.push(`Marked ${totals.watchings} ${filmWord} watched`);
+    }
   }
 
   if (totals.watchlisted > 0) {

@@ -163,7 +163,7 @@ function createProfile(): GuestProfile {
 }
 
 function getPasteInput(): HTMLTextAreaElement {
-  return screen.getByLabelText('Paste a list — one film per line') as HTMLTextAreaElement;
+  return screen.getByLabelText('Paste a list') as HTMLTextAreaElement;
 }
 
 function importResponse(
@@ -1718,6 +1718,19 @@ describe('App', () => {
 
     expect(await screen.findByText(LIST_PASTE_TOO_LONG_MESSAGE)).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('labels the paste field and keeps the one-film-per-line hint', () => {
+    renderApp();
+    selectSource("A list I'll paste");
+
+    expect(screen.getByLabelText('Paste a list')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'One film per line, or paste Letterboxd CSV rows. Ratings are ignored for this source.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText('Paste a list — one film per line')).toBeNull();
   });
 
   it('asks for a list when Use this list is pressed with an empty textarea', async () => {
