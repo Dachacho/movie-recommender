@@ -12,6 +12,7 @@ import { toMovieCard } from '../movies/card.js';
 import { createEmbedder, type Embedder } from '../movies/embed.js';
 import { combineQueryVector } from './combine.js';
 import { parsePromptConstraints } from './constraints.js';
+import { parsePromptMood } from './mood.js';
 import { recommendMovies } from './recommend.js';
 
 function sendError(response: Response, status: number, body: ApiError): void {
@@ -133,12 +134,14 @@ export function createRecommendationRoutes(
 
     const filters =
       prompt === undefined || prompt === null ? undefined : parsePromptConstraints(prompt);
+    const mood = prompt == null ? null : parsePromptMood(prompt);
 
     const result = await recommendMovies(db, {
       tasteVector: queryVector,
       limit,
       ...(exploration === undefined ? {} : { exploration }),
       ...(filters === undefined ? {} : { filters }),
+      ...(mood === null ? {} : { mood }),
       ...(candidateIds === undefined ? {} : { candidateIds }),
       ...(excludeIds === undefined ? {} : { excludeIds }),
     });

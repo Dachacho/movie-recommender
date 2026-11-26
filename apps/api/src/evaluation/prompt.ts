@@ -18,11 +18,21 @@ import {
   TASTE_WEIGHT,
 } from '../modules/recommendations/combine.js';
 import { parsePromptConstraints } from '../modules/recommendations/constraints.js';
+import {
+  MOOD_BOOST_WEIGHT,
+  MOOD_GENRE_AFFINITIES,
+  MOOD_PHRASES,
+  parsePromptMood,
+  type MoodGenreWeights,
+} from '../modules/recommendations/mood.js';
 import { recommendMovies } from '../modules/recommendations/recommend.js';
 import type { RecommendationFilters } from '../modules/recommendations/types.js';
+import { computeTasteVector } from '../modules/taste/vector.js';
 import { PROMPT_CASES, type PromptCase, type PromptCaseGroup } from './prompt-cases.js';
 import {
   createSyntheticTasteVector,
+  satisfiesFilters,
+  scoreSelection,
   scoreSelections,
   SYNTHETIC_TASTE_SEED,
   type PickMetadata,
@@ -35,11 +45,28 @@ const OUTPUT_PATH = fileURLToPath(
 );
 const RECOMMENDATION_LIMIT = 4;
 const MATERIAL_IMPROVEMENT = 0.02;
+const MOOD_HOLDOUT_TOLERANCE = 0.01;
 const GROUP_ORDER: readonly PromptCaseGroup[] = ['explicit', 'soft', 'edge', 'control'];
+const BOOST_WEIGHTS: readonly number[] = [0, 0.1, 0.15, 0.18, 0.2, 0.25];
+const REPORTED_MOOD_CASE_ID = 'edge-lighthearted-girlfriend';
+const THRILLER_PERSONA_IDS = [274, 807, 1949, 146233, 210577, 242582, 273481] as const;
+const WARM_MOOD_GENRES = ['Romance', 'Family', 'Animation'] as const;
+
+type PersonaId = 'synthetic' | 'thriller';
+
+interface Persona {
+  id: PersonaId;
+  label: string;
+  tasteVector: readonly number[];
+}
 
 interface WeightPair {
   promptWeight: number;
   tasteWeight: number;
+}
+
+interface PickRecord extends PickMetadata {
+  title: string;
 }
 
 const WEIGHT_PAIRS: readonly WeightPair[] = [
@@ -86,7 +113,7 @@ const FOLLOW_UP_MISSES: readonly FollowUpMiss[] = [
   {
     prompt: 'lighthearted movie i can watch with my girlfriend',
     explanation:
-      'This exact prompt previously parsed to no filters, so a thriller-leaning taste pulled thriller/crime/horror picks. Added "lighthearted", "light-hearted" and "light hearted" as Comedy synonyms in the existing Comedy pattern. "Girlfriend" remains date context only: no Romance hard filter, and Romance stays a 0.5 graded label for this case. The taste blend remains 0.50/0.50.',
+      'This exact prompt previously parsed to no filters, so a thriller-leaning taste pulled thriller/crime/horror picks. Added "lighthearted", "light-hearted" and "light hearted" as Comedy synonyms in the existing Comedy pattern. "Girlfriend" remains date context only: no Romance hard filter, and Romance stays a 0.5 graded label for this case. The taste blend remains 0.50/0.50; the additive mood term is evaluated separately in the Mood affinity section.',
   },
 ];
 
@@ -94,6 +121,7 @@ interface ParseCheck {
   promptCase: PromptCase;
   index: number;
   parsed: RecommendationFilters | undefined;
+  mood: MoodGenreWeights | null;
   matches: boolean;
 }
 
@@ -101,6 +129,23 @@ interface WeightRun {
   promptWeight: number;
   tasteWeight: number;
   score: PromptWeightScore;
+}
+
+interface BoostRun {
+  persona: Persona;
+  boostWeight: number;
+  score: PromptWeightScore;
+  tuneGenrePrecision: number;
+  holdoutGenrePrecision: number;
+  nonMoodSoftGenrePrecision: number;
+  reportedPicks: readonly PickRecord[];
+  guardPassed: boolean;
+}
+
+interface MoodBoostDecision {
+  chosenWeight: number;
+  maximumHoldoutPrecision: number;
+  guardPassingWeights: readonly number[];
 }
 
 interface CatalogStats {
@@ -112,6 +157,8 @@ interface ReportInput {
   catalog: CatalogStats;
   parseChecks: readonly ParseCheck[];
   weightRuns: readonly WeightRun[];
+  moodRuns: readonly BoostRun[];
+  decision: MoodBoostDecision;
 }
 
 function pairLabel(pair: WeightPair): string {
@@ -145,9 +192,9 @@ function weightCell(pair: WeightPair): string {
 async function loadPickMetadata(
   db: Database,
   movieIds: readonly number[],
-): Promise<Map<number, PickMetadata>> {
+): Promise<Map<number, PickRecord>> {
   const ids = [...new Set(movieIds)];
-  const metadata = new Map<number, PickMetadata>();
+  const metadata = new Map<number, PickRecord>();
 
   if (ids.length === 0) {
     return metadata;
@@ -156,6 +203,7 @@ async function loadPickMetadata(
   const rows = await db
     .select({
       movieId: movies.id,
+      title: movies.title,
       releaseYear: movies.releaseYear,
       runtime: movies.runtime,
       genres: movies.genres,
@@ -173,6 +221,7 @@ async function loadPickMetadata(
 
     metadata.set(row.movieId, {
       movieId: row.movieId,
+      title: row.title,
       releaseYear: row.releaseYear,
       runtime: row.runtime,
       genres: row.genres,
@@ -181,6 +230,224 @@ async function loadPickMetadata(
   }
 
   return metadata;
+}
+
+/**
+ * Deterministic thriller taste from committed catalog ids at five stars. Rows
+ * are sorted by movieId because float addition is not associative; embeddings
+ * come from Postgres, never from a live API.
+ */
+async function loadThrillerTasteVector(db: Database): Promise<number[]> {
+  const rows = await db
+    .select({ movieId: movies.id, embedding: movies.embedding })
+    .from(movies)
+    .where(inArray(movies.id, [...THRILLER_PERSONA_IDS]));
+
+  rows.sort((left, right) => left.movieId - right.movieId);
+
+  if (rows.length !== THRILLER_PERSONA_IDS.length) {
+    throw new Error(
+      `Expected ${String(THRILLER_PERSONA_IDS.length)} thriller fixture rows, received ${String(
+        rows.length,
+      )}.`,
+    );
+  }
+
+  const tasteVector = computeTasteVector(
+    rows.map((row) => {
+      if (row.embedding === null) {
+        throw new Error(`Thriller fixture movieId ${String(row.movieId)} has no embedding.`);
+      }
+
+      return { movieId: row.movieId, rating: 5, embedding: row.embedding };
+    }),
+  );
+
+  if (tasteVector === null) {
+    throw new Error('The thriller fixture produced a zero-norm taste vector.');
+  }
+
+  return tasteVector;
+}
+
+function boostKey(personaId: PersonaId, boostWeight: number, caseId: string): string {
+  return `${personaId}:${String(boostWeight)}:${caseId}`;
+}
+
+function pickRecordsFromIds(
+  movieIds: readonly number[],
+  metadata: ReadonlyMap<number, PickRecord>,
+  caseId: string,
+): PickRecord[] {
+  return movieIds.map((movieId) => {
+    const entry = metadata.get(movieId);
+
+    if (entry === undefined) {
+      throw new Error(
+        `Missing metadata for recommended movieId ${String(movieId)} in case ${caseId}.`,
+      );
+    }
+
+    return entry;
+  });
+}
+
+function selectionsFromPickIds(
+  checks: readonly ParseCheck[],
+  pickIdsFor: (check: ParseCheck) => readonly number[],
+  metadata: ReadonlyMap<number, PickRecord>,
+): PromptSelection[] {
+  return checks.map((check) => ({
+    group: check.promptCase.group,
+    expectedFilters: check.promptCase.expectedFilters,
+    genreWeights: check.promptCase.genreWeights,
+    picks: pickRecordsFromIds(pickIdsFor(check), metadata, check.promptCase.id),
+  }));
+}
+
+function meanGenrePrecision(
+  selections: readonly PromptSelection[],
+  tasteVector: readonly number[],
+): number {
+  const precisions = selections
+    .map((selection) => scoreSelection(selection, tasteVector).genrePrecision)
+    .filter((value): value is number => value !== undefined);
+
+  if (precisions.length === 0) {
+    return 0;
+  }
+
+  return precisions.reduce((sum, value) => sum + value, 0) / precisions.length;
+}
+
+function meetsReportedMoodGuard(picks: readonly PickMetadata[]): boolean {
+  if (picks.length !== RECOMMENDATION_LIMIT) {
+    return false;
+  }
+
+  if (!picks.every((pick) => pick.genres.includes('Comedy'))) {
+    return false;
+  }
+
+  const warmPicks = picks.filter((pick) =>
+    pick.genres.some((genre) => WARM_MOOD_GENRES.some((warm) => warm === genre)),
+  );
+  const romancePicks = picks.filter((pick) => pick.genres.includes('Romance'));
+
+  return warmPicks.length >= 3 && romancePicks.length >= 1;
+}
+
+/**
+ * Guards report/route parity for the reported case. The harness embeds this
+ * prompt alone, exactly as the route does; if it ever batches again, the vector
+ * changes and the reported ids can silently disagree with production.
+ */
+function assertReportedPicks(
+  picks: readonly PickMetadata[],
+  parsedFilters: RecommendationFilters | undefined,
+  caseId: string,
+): void {
+  if (picks.length !== RECOMMENDATION_LIMIT) {
+    throw new Error(
+      `The reported case ${caseId} returned ${String(picks.length)} picks; expected ${String(
+        RECOMMENDATION_LIMIT,
+      )}.`,
+    );
+  }
+
+  if (parsedFilters === undefined) {
+    throw new Error(`The reported case ${caseId} parsed to no hard filter.`);
+  }
+
+  for (const pick of picks) {
+    if (!satisfiesFilters(pick, parsedFilters)) {
+      throw new Error(
+        `The reported case ${caseId} returned movieId ${String(
+          pick.movieId,
+        )} that violates the parsed hard filter ${JSON.stringify(parsedFilters)}.`,
+      );
+    }
+  }
+}
+
+/**
+ * Pre-declared selection rule. The reported thriller case must pass the
+ * acceptance guard. From those weights, take the smallest whose holdout
+ * precision is within MOOD_HOLDOUT_TOLERANCE of the maximum and whose tune,
+ * non-mood, constraint and empty-result metrics do not fall below the no-boost
+ * run. Runs are ordered by boost weight, so ties choose the smaller boost.
+ */
+function chooseMoodBoostWeight(runs: readonly BoostRun[]): MoodBoostDecision {
+  const thrillerRuns = runs
+    .filter((run) => run.persona.id === 'thriller')
+    .sort((left, right) => left.boostWeight - right.boostWeight);
+
+  if (thrillerRuns.length !== BOOST_WEIGHTS.length) {
+    throw new Error('The mood sweep must contain one thriller run per boost weight.');
+  }
+
+  const baseline = thrillerRuns.find((run) => run.boostWeight === 0);
+
+  if (baseline === undefined) {
+    throw new Error('The mood sweep must include the no-boost baseline.');
+  }
+
+  const guardPassing = thrillerRuns.filter((run) => run.guardPassed);
+
+  if (guardPassing.length === 0) {
+    throw new Error('No boost weight passes the reported-case acceptance guard.');
+  }
+
+  // Only guard-passing weights are eligible, so their best holdout precision is
+  // the target the rule compares against.
+  const maximumHoldoutPrecision = Math.max(...guardPassing.map((run) => run.holdoutGenrePrecision));
+
+  const chosen = guardPassing.find(
+    (run) =>
+      run.holdoutGenrePrecision + 1e-12 >= maximumHoldoutPrecision - MOOD_HOLDOUT_TOLERANCE &&
+      run.tuneGenrePrecision + 1e-12 >= baseline.tuneGenrePrecision &&
+      run.nonMoodSoftGenrePrecision + 1e-12 >= baseline.nonMoodSoftGenrePrecision &&
+      run.score.constraintSatisfactionNonEmpty + 1e-12 >=
+        baseline.score.constraintSatisfactionNonEmpty &&
+      run.score.emptyResults <= baseline.score.emptyResults,
+  );
+
+  if (chosen === undefined) {
+    throw new Error(
+      `No boost weight passes the pre-declared mood selection rule. ${thrillerRuns
+        .map(
+          (run) =>
+            `boost ${run.boostWeight.toFixed(2)}: guard=${
+              run.guardPassed ? 'pass' : 'fail'
+            } tune=${run.tuneGenrePrecision.toFixed(4)} holdout=${run.holdoutGenrePrecision.toFixed(
+              4,
+            )} nonMood=${run.nonMoodSoftGenrePrecision.toFixed(
+              4,
+            )} constraints=${run.score.constraintSatisfactionNonEmpty.toFixed(
+              4,
+            )} empty=${String(run.score.emptyResults)}`,
+        )
+        .join(
+          '; ',
+        )}; maxHoldout=${maximumHoldoutPrecision.toFixed(4)}; baseline tune=${baseline.tuneGenrePrecision.toFixed(
+        4,
+      )} nonMood=${baseline.nonMoodSoftGenrePrecision.toFixed(
+        4,
+      )} constraints=${baseline.score.constraintSatisfactionNonEmpty.toFixed(4)}.`,
+    );
+  }
+
+  return {
+    chosenWeight: chosen.boostWeight,
+    maximumHoldoutPrecision,
+    guardPassingWeights: guardPassing.map((run) => run.boostWeight),
+  };
+}
+
+function affinityText(weights: MoodGenreWeights): string {
+  return Object.entries(weights)
+    .map(([genre, weight]) => `${genre} ${weight.toFixed(1)}`)
+    .join(', ');
 }
 
 function compareRuns(left: WeightRun, right: WeightRun): number {
@@ -259,7 +526,7 @@ function recommendationText(weightRuns: readonly WeightRun[]): string {
 }
 
 function renderReport(input: ReportInput): string {
-  const { catalog, parseChecks, weightRuns } = input;
+  const { catalog, parseChecks, weightRuns, moodRuns, decision } = input;
   const lines: string[] = [];
   const parsePassed = parseChecks.filter((check) => check.matches).length;
   const parseMisses = parseChecks.filter((check) => !check.matches);
@@ -271,7 +538,7 @@ function renderReport(input: ReportInput): string {
       PROMPT_WEIGHT,
     )}/${String(
       TASTE_WEIGHT,
-    )}); parser coverage was widened in this step for the initial misses documented in the parser audit.`,
+    )}) or the shipped mood boost; parser coverage was widened in this step for the initial misses documented in the parser audit, and the mood boost was selected by the pre-declared held-out rule below.`,
   );
   lines.push('');
   lines.push('## Setup and provenance');
@@ -288,14 +555,27 @@ function renderReport(input: ReportInput): string {
     )}\`. It is not a real user and no guest data is read.`,
   );
   lines.push(
-    `- Retrieval: production \`recommendMovies\` path (top-500 cosine buffer, quality tilt, diversity rerank), limit ${String(
-      RECOMMENDATION_LIMIT,
-    )}, exploration 0, filters from \`parsePromptConstraints\`.`,
+    `- Thriller taste vector: deterministic persona from ${String(
+      THRILLER_PERSONA_IDS.length,
+    )} committed catalog ids (${THRILLER_PERSONA_IDS.join(', ')}) rated five stars. Embeddings are read from Postgres and summed after sorting rows by movieId; no live API is used.`,
   );
   lines.push(
-    `- Prompt texts are embedded in one batch. Weights are passed explicitly to \`combineQueryVector\`; production \`PROMPT_WEIGHT\`/\`TASTE_WEIGHT\` remain ${String(
+    `- Retrieval: production \`recommendMovies\` path (top-500 cosine buffer, quality tilt, diversity rerank), limit ${String(
+      RECOMMENDATION_LIMIT,
+    )}, exploration 0, filters from \`parsePromptConstraints\` and mood affinities from \`parsePromptMood\` when the prompt contains a supported phrase.`,
+  );
+  lines.push(
+    `- Prompt texts are embedded one at a time, matching the route's single-prompt request. Batch size changes the vector under this q8 model (cosine 0.9888 between a single embed and the same prompt in a 34-prompt batch, 0.9909 in a two-prompt batch, 1.0000 across repeated single embeds), so batching would make this report disagree with the served route. Weights are passed explicitly to \`combineQueryVector\`; production \`PROMPT_WEIGHT\`/\`TASTE_WEIGHT\` remain ${String(
       PROMPT_WEIGHT,
     )}/${String(TASTE_WEIGHT)}.`,
+  );
+  lines.push(
+    `- Mood sweep: the production ${pairLabel({
+      promptWeight: PROMPT_WEIGHT,
+      tasteWeight: TASTE_WEIGHT,
+    })} pairing for both personas at boost weights ${BOOST_WEIGHTS.map((weight) =>
+      weight.toFixed(2),
+    ).join(', ')}.`,
   );
   lines.push(
     '- The harness only reads the catalog and embeddings (no writes, no whole-profile load, no server).',
@@ -331,8 +611,17 @@ function renderReport(input: ReportInput): string {
     (promptCase) => Object.keys(promptCase.genreWeights).length > 0,
   ).length;
 
+  const tuneCases = PROMPT_CASES.filter((promptCase) => promptCase.moodSplit === 'tune').length;
+  const holdoutCases = PROMPT_CASES.filter(
+    (promptCase) => promptCase.moodSplit === 'holdout',
+  ).length;
+
   lines.push(
     `| **total** | **${String(PROMPT_CASES.length)}** | **${String(withFilters)}** | **${String(withWeights)}** |`,
+  );
+  lines.push('');
+  lines.push(
+    `Mood split: ${String(tuneCases)} tune cases and ${String(holdoutCases)} holdout cases. Tune cases inform the weight; holdout cases only validate it.`,
   );
   lines.push('');
   lines.push('## Parser audit');
@@ -389,7 +678,13 @@ function renderReport(input: ReportInput): string {
   lines.push(
     `- \`tasteSimilarity@${String(
       RECOMMENDATION_LIMIT,
-    )}\`: mean cosine between returned picks and the fixed synthetic taste vector, over cases that returned picks. Diagnostic only.`,
+    )}\`: mean cosine between returned picks and the run's persona taste vector, over cases that returned picks. Diagnostic only.`,
+  );
+  lines.push(
+    '- `tuneMoodPrecision@4` and `holdoutMoodPrecision@4`: mean graded genre precision over the mood cases in each split, regardless of case group.',
+  );
+  lines.push(
+    '- `nonMoodSoftPrecision@4`: mean graded genre precision over soft cases whose prompt contains no mood phrase. It must be identical across boost weights because the term is absent for those prompts.',
   );
   lines.push(
     '- Empty-result counts are reported per weight pair because filtering can exhaust a pool.',
@@ -428,7 +723,7 @@ function renderReport(input: ReportInput): string {
   lines.push('## Weight sweep');
   lines.push('');
   lines.push(
-    'All five weight pairs use the same prompts, batch embeddings and synthetic taste vector. Only the combination weights change.',
+    'All five weight pairs use the same prompts, single-prompt embeddings and synthetic taste vector. Only the combination weights change. Mood prompts also receive the shipped additive mood term.',
   );
   lines.push('');
   lines.push(
@@ -451,6 +746,160 @@ function renderReport(input: ReportInput): string {
       )} | ${metric(score.genrePrecisionHard)} | ${metric(score.genrePrecisionSoft)} | ${metric(
         score.tasteSimilarity,
       )} |`,
+    );
+  }
+
+  lines.push('');
+  lines.push('## Mood affinity');
+  lines.push('');
+  lines.push(
+    'The additive mood term applies only when the prompt contains one of the supported phrases. Per film it adds the strongest matching genre affinity multiplied by the boost weight, capped at that weight; it never filters, so it only tilts the pool ordering and the diversity rerank.',
+  );
+  lines.push('');
+  lines.push('### Phrase table');
+  lines.push('');
+  lines.push('| Phrase | Genre affinities (max per genre) |');
+  lines.push('| --- | --- |');
+
+  for (const phrase of MOOD_PHRASES) {
+    lines.push(`| \`${phrase}\` | ${affinityText(MOOD_GENRE_AFFINITIES)} |`);
+  }
+
+  lines.push('');
+  lines.push('### Boost sweep');
+  lines.push('');
+  lines.push(
+    `Production ${pairLabel({
+      promptWeight: PROMPT_WEIGHT,
+      tasteWeight: TASTE_WEIGHT,
+    })} pairing; the reported case is \`${REPORTED_MOOD_CASE_ID}\`. The guard is defined for the thriller persona only.`,
+  );
+  lines.push('');
+  lines.push(
+    `| Persona | Boost | Reported guard | Tune mood precision@${String(
+      RECOMMENDATION_LIMIT,
+    )} | Holdout mood precision@${String(RECOMMENDATION_LIMIT)} | Non-mood soft precision@${String(
+      RECOMMENDATION_LIMIT,
+    )} | Non-empty constraints | Empty results | Taste similarity |`,
+  );
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+
+  for (const run of moodRuns) {
+    const guard =
+      run.persona.id === 'thriller' ? (run.guardPassed ? 'pass' : 'fail') : 'not applicable';
+
+    lines.push(
+      `| ${run.persona.label} | ${run.boostWeight.toFixed(2)} | ${guard} | ${metric(
+        run.tuneGenrePrecision,
+      )} | ${metric(run.holdoutGenrePrecision)} | ${metric(
+        run.nonMoodSoftGenrePrecision,
+      )} | ${String(run.score.constraintSatisfiedNonEmptyCases)}/${String(
+        run.score.constraintNonEmptyCases,
+      )} | ${String(run.score.emptyResults)} | ${metric(run.score.tasteSimilarity)} |`,
+    );
+  }
+
+  lines.push('');
+  lines.push('### Selection rule and chosen weight');
+  lines.push('');
+  lines.push(
+    `1. Acceptance guard: with the thriller persona and \`${REPORTED_MOOD_CASE_ID}\`, all ${String(
+      RECOMMENDATION_LIMIT,
+    )} picks are Comedy and at least 3 carry Romance, Family or Animation with at least one Romance.`,
+  );
+  lines.push(
+    `2. Among weights that pass the guard, choose the smallest boost whose holdout mood precision is within ${MOOD_HOLDOUT_TOLERANCE.toFixed(
+      2,
+    )} of the maximum holdout precision in that guard-passing set and that does not reduce tune precision, non-mood soft precision or non-empty constraint satisfaction versus the no-boost baseline, or increase empty results.`,
+  );
+  lines.push('3. Ties choose the smaller boost, because less taste override is preferred.');
+  lines.push('');
+  lines.push(
+    'The rule evaluates the thriller persona, the persona named by the acceptance guard; the synthetic persona is reported for comparison only.',
+  );
+  lines.push('');
+  lines.push(
+    `Guard-passing weights: ${decision.guardPassingWeights.length === 0 ? 'none' : decision.guardPassingWeights.map((weight) => weight.toFixed(2)).join(', ')}. Maximum holdout mood precision among them: ${metric(
+      decision.maximumHoldoutPrecision,
+    )}.`,
+  );
+  lines.push('');
+  lines.push(
+    `Chosen boost: **${decision.chosenWeight.toFixed(2)}**. Shipped \`MOOD_BOOST_WEIGHT\`: ${MOOD_BOOST_WEIGHT.toFixed(
+      2,
+    )}${
+      Math.abs(decision.chosenWeight - MOOD_BOOST_WEIGHT) <= 1e-12
+        ? ' (matches).'
+        : ' (**mismatch: update the constant**).'
+    }`,
+  );
+
+  const reportedRun = moodRuns.find(
+    (run) => run.persona.id === 'thriller' && run.boostWeight === decision.chosenWeight,
+  );
+
+  if (reportedRun === undefined) {
+    throw new Error('The chosen boost is missing from the thriller sweep.');
+  }
+
+  const warmPicks = reportedRun.reportedPicks.filter((pick) =>
+    pick.genres.some((genre) => WARM_MOOD_GENRES.some((warm) => warm === genre)),
+  );
+  const romancePicks = reportedRun.reportedPicks.filter((pick) => pick.genres.includes('Romance'));
+
+  lines.push('');
+  lines.push('### Reported case at the chosen weight');
+  lines.push('');
+  lines.push(
+    `Thriller persona, \`${REPORTED_MOOD_CASE_ID}\`, boost ${decision.chosenWeight.toFixed(2)}:`,
+  );
+  lines.push('');
+  lines.push('| Rank | movieId | Title | Genres |');
+  lines.push('| --- | --- | --- | --- |');
+
+  reportedRun.reportedPicks.forEach((pick, index) => {
+    lines.push(
+      `| ${String(index + 1)} | ${String(pick.movieId)} | ${markdownCell(
+        pick.title,
+      )} | ${markdownCell(pick.genres.join(', '))} |`,
+    );
+  });
+
+  lines.push('');
+  lines.push(
+    `Reported ids: ${reportedRun.reportedPicks.map((pick) => String(pick.movieId)).join(', ')}.`,
+  );
+  lines.push('');
+  lines.push(
+    `Result: ${String(warmPicks.length)}/${String(
+      reportedRun.reportedPicks.length,
+    )} carry a warm genre, ${String(romancePicks.length)} carry Romance; guard ${
+      reportedRun.guardPassed ? 'passes' : 'fails'
+    }.`,
+  );
+  lines.push('');
+  lines.push(
+    'The harness embeds this prompt one at a time, exactly as the route does. The DB regression in `prompt-filter.test.ts` follows the same single-prompt path against the current catalog snapshot and pins these ids and their order.',
+  );
+  lines.push('');
+  lines.push('### No-mood guard');
+  lines.push('');
+
+  const personas = new Map(moodRuns.map((run) => [run.persona.id, run.persona]));
+
+  for (const persona of personas.values()) {
+    const values = moodRuns
+      .filter((run) => run.persona.id === persona.id)
+      .map((run) => run.nonMoodSoftGenrePrecision);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+
+    lines.push(
+      `- ${persona.label}: non-mood soft precision is ${metric(min)}–${metric(
+        max,
+      )} across boost weights${
+        Math.abs(max - min) <= 1e-12 ? ' (unchanged, as required)' : ' (**changed: investigate**)'
+      }.`,
     );
   }
 
@@ -496,6 +945,11 @@ function renderReport(input: ReportInput): string {
   lines.push(
     `- Taste similarity (diagnostic) ranges ${metric(tasteMin)}–${metric(tasteMax)} against the fixed synthetic persona.`,
   );
+  lines.push(
+    `- Mood: the pre-declared rule selects ${decision.chosenWeight.toFixed(
+      2,
+    )}; the reported thriller case passes the guard at that weight, and non-mood soft cases are unchanged across the sweep.`,
+  );
   lines.push('');
   lines.push('### Recommendation');
   lines.push('');
@@ -520,7 +974,10 @@ function renderReport(input: ReportInput): string {
     )} hand-labelled prompts) and the genre labels are an authored interpretation, not an objective ground truth.`,
   );
   lines.push(
-    '- The synthetic taste vector is a fixed deterministic direction, not a real user; taste similarity is a diagnostic, not evidence about personalization.',
+    '- The synthetic and thriller taste vectors are fixed deterministic personas, not real users; taste similarity is a diagnostic, not evidence about personalization.',
+  );
+  lines.push(
+    '- Mood labels are authored and only two holdout mood cases exist. The chosen weight is evidence-backed on that small sample and must be retuned when more holdout cases are added.',
   );
   lines.push(
     '- One deterministic run, no confidence intervals or significance test. Differences below the 0.02 materiality margin are treated as noise.',
@@ -531,9 +988,6 @@ function renderReport(input: ReportInput): string {
   lines.push('- Controls have no genre labels; they exercise the taste/ordering path only.');
   lines.push(
     '- The catalog is the local 2026 snapshot and the embedding model is pinned; another snapshot can change which films compete for four slots.',
-  );
-  lines.push(
-    '- No soft mood boost was added. Soft prompts are measured through semantic embedding similarity only.',
   );
   lines.push('');
 
@@ -562,22 +1016,41 @@ async function main(): Promise<void> {
         promptCase,
         index,
         parsed,
+        mood: parsePromptMood(promptCase.prompt),
         matches: isDeepStrictEqual(parsed, promptCase.expectedFilters),
       };
     });
 
     const embedder = await createEmbedder();
-    const promptVectors = await embedder(PROMPT_CASES.map((promptCase) => promptCase.prompt));
+    const promptVectors: number[][] = [];
 
-    if (promptVectors.length !== PROMPT_CASES.length) {
-      throw new Error(
-        `Expected ${String(PROMPT_CASES.length)} prompt embeddings, received ${String(
-          promptVectors.length,
-        )}.`,
-      );
+    // Production embeds one prompt per request (`routes.ts`), and batch size
+    // changes the vector under this q8 model, so a batched harness would rank a
+    // different pool and disagree with the served route.
+    for (const promptCase of PROMPT_CASES) {
+      const [promptVector] = await embedder([promptCase.prompt]);
+
+      if (promptVector === undefined) {
+        throw new Error(`Missing embedding for prompt case ${promptCase.id}.`);
+      }
+
+      promptVectors.push(promptVector);
     }
 
-    const tasteVector = createSyntheticTasteVector();
+    const syntheticTasteVector = createSyntheticTasteVector();
+    const personas: readonly Persona[] = [
+      {
+        id: 'synthetic',
+        label: 'Synthetic seed',
+        tasteVector: syntheticTasteVector,
+      },
+      {
+        id: 'thriller',
+        label: 'Thriller fixture',
+        tasteVector: await loadThrillerTasteVector(db),
+      },
+    ];
+
     const picksByRun = new Map<string, number[]>();
     const runCount = WEIGHT_PAIRS.length * PROMPT_CASES.length;
     let completed = 0;
@@ -594,7 +1067,7 @@ async function main(): Promise<void> {
 
         const queryVector = combineQueryVector({
           promptVector,
-          tasteVector,
+          tasteVector: syntheticTasteVector,
           promptWeight: pair.promptWeight,
           tasteWeight: pair.tasteWeight,
         });
@@ -606,6 +1079,7 @@ async function main(): Promise<void> {
         const result = await recommendMovies(db, {
           tasteVector: queryVector,
           ...(check.parsed === undefined ? {} : { filters: check.parsed }),
+          ...(check.mood === null ? {} : { mood: check.mood }),
           limit: RECOMMENDATION_LIMIT,
         });
 
@@ -621,45 +1095,146 @@ async function main(): Promise<void> {
       }
     }
 
-    const allPickIds = [...picksByRun.values()].flat();
-    const metadata = await loadPickMetadata(db, allPickIds);
-    const weightRuns: WeightRun[] = WEIGHT_PAIRS.map((pair) => {
-      const selections: PromptSelection[] = PROMPT_CASES.map((promptCase) => {
-        const pickIds =
-          picksByRun.get(
-            `${String(pair.promptWeight)}:${String(pair.tasteWeight)}:${promptCase.id}`,
-          ) ?? [];
-        const picks = pickIds.map((movieId) => {
-          const entry = metadata.get(movieId);
+    const boostPicks = new Map<string, number[]>();
+    const boostRunCount = personas.length * BOOST_WEIGHTS.length * parseChecks.length;
+    let completedBoostRuns = 0;
 
-          if (entry === undefined) {
-            throw new Error(
-              `Missing metadata for recommended movieId ${String(movieId)} in case ${promptCase.id}.`,
-            );
+    for (const persona of personas) {
+      for (const boostWeight of BOOST_WEIGHTS) {
+        console.error(`Evaluating mood boost ${boostWeight.toFixed(2)} for ${persona.label}`);
+
+        for (const check of parseChecks) {
+          const promptVector = promptVectors[check.index];
+
+          if (promptVector === undefined) {
+            throw new Error(`Missing embedding for prompt case ${check.promptCase.id}.`);
           }
 
-          return entry;
-        });
+          const queryVector = combineQueryVector({
+            promptVector,
+            tasteVector: persona.tasteVector,
+            promptWeight: PROMPT_WEIGHT,
+            tasteWeight: TASTE_WEIGHT,
+          });
 
-        return {
-          group: promptCase.group,
-          expectedFilters: promptCase.expectedFilters,
-          genreWeights: promptCase.genreWeights,
-          picks,
-        };
-      });
+          if (queryVector === null) {
+            throw new Error(`No query vector for prompt case ${check.promptCase.id}.`);
+          }
+
+          const result = await recommendMovies(db, {
+            tasteVector: queryVector,
+            ...(check.parsed === undefined ? {} : { filters: check.parsed }),
+            ...(check.mood === null ? {} : { mood: check.mood }),
+            moodBoostWeight: boostWeight,
+            limit: RECOMMENDATION_LIMIT,
+          });
+
+          boostPicks.set(boostKey(persona.id, boostWeight, check.promptCase.id), result.movieIds);
+          completedBoostRuns += 1;
+        }
+      }
+
+      console.error(`Evaluated ${String(completedBoostRuns)} / ${String(boostRunCount)} mood runs`);
+    }
+
+    const allPickIds = [...picksByRun.values(), ...boostPicks.values()].flat();
+    const metadata = await loadPickMetadata(db, allPickIds);
+    const weightRuns: WeightRun[] = WEIGHT_PAIRS.map((pair) => {
+      const selections = selectionsFromPickIds(
+        parseChecks,
+        (check) =>
+          picksByRun.get(
+            `${String(pair.promptWeight)}:${String(pair.tasteWeight)}:${check.promptCase.id}`,
+          ) ?? [],
+        metadata,
+      );
 
       return {
         promptWeight: pair.promptWeight,
         tasteWeight: pair.tasteWeight,
-        score: scoreSelections(selections, tasteVector),
+        score: scoreSelections(selections, syntheticTasteVector),
       };
     });
+
+    const moodRuns: BoostRun[] = [];
+
+    for (const persona of personas) {
+      for (const boostWeight of BOOST_WEIGHTS) {
+        const selections = selectionsFromPickIds(
+          parseChecks,
+          (check) => boostPicks.get(boostKey(persona.id, boostWeight, check.promptCase.id)) ?? [],
+          metadata,
+        );
+        const tuneSelections = selections.filter(
+          (_selection, index) => parseChecks[index]?.promptCase.moodSplit === 'tune',
+        );
+        const holdoutSelections = selections.filter(
+          (_selection, index) => parseChecks[index]?.promptCase.moodSplit === 'holdout',
+        );
+        const nonMoodSoftSelections = selections.filter((selection, index) => {
+          const check = parseChecks[index];
+
+          return check !== undefined && selection.group === 'soft' && check.mood === null;
+        });
+        const reportedCheck = parseChecks.find(
+          (check) => check.promptCase.id === REPORTED_MOOD_CASE_ID,
+        );
+
+        if (reportedCheck === undefined) {
+          throw new Error(`Missing the reported mood case ${REPORTED_MOOD_CASE_ID}.`);
+        }
+
+        const reportedPicks = pickRecordsFromIds(
+          boostPicks.get(boostKey(persona.id, boostWeight, REPORTED_MOOD_CASE_ID)) ?? [],
+          metadata,
+          REPORTED_MOOD_CASE_ID,
+        );
+
+        moodRuns.push({
+          persona,
+          boostWeight,
+          score: scoreSelections(selections, persona.tasteVector),
+          tuneGenrePrecision: meanGenrePrecision(tuneSelections, persona.tasteVector),
+          holdoutGenrePrecision: meanGenrePrecision(holdoutSelections, persona.tasteVector),
+          nonMoodSoftGenrePrecision: meanGenrePrecision(nonMoodSoftSelections, persona.tasteVector),
+          reportedPicks,
+          guardPassed: meetsReportedMoodGuard(reportedPicks),
+        });
+      }
+    }
+
+    const decision = chooseMoodBoostWeight(moodRuns);
+
+    const reportedCheck = parseChecks.find(
+      (check) => check.promptCase.id === REPORTED_MOOD_CASE_ID,
+    );
+    const reportedRun = moodRuns.find(
+      (run) => run.persona.id === 'thriller' && run.boostWeight === decision.chosenWeight,
+    );
+
+    if (reportedCheck === undefined || reportedRun === undefined) {
+      throw new Error(
+        `Missing the reported mood case ${REPORTED_MOOD_CASE_ID} at the chosen weight.`,
+      );
+    }
+
+    assertReportedPicks(reportedRun.reportedPicks, reportedCheck.parsed, REPORTED_MOOD_CASE_ID);
+
+    if (Math.abs(decision.chosenWeight - MOOD_BOOST_WEIGHT) > 1e-12) {
+      console.error(
+        `The pre-declared rule selects ${decision.chosenWeight.toFixed(2)}, but MOOD_BOOST_WEIGHT is ${MOOD_BOOST_WEIGHT.toFixed(
+          2,
+        )}. Update the constant in mood.ts.`,
+      );
+      process.exitCode = 1;
+    }
 
     const report = renderReport({
       catalog: { total: catalogRow.total, embedded: catalogRow.embedded },
       parseChecks,
       weightRuns,
+      moodRuns,
+      decision,
     });
 
     console.log(report);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MOOD_BOOST_WEIGHT, type MoodGenreWeights } from './mood.js';
 import {
   DEFAULT_DIVERSITY_PENALTY,
   MAX_RECOMMENDATIONS,
@@ -250,6 +251,101 @@ describe('selectDiverse', () => {
 
       expect(first.map((pick) => pick.movieId)).toEqual([2, 3]);
       expect(second).toEqual(first);
+    });
+  });
+
+  describe('mood affinity', () => {
+    const LIGHTHEARTED: MoodGenreWeights = {
+      Comedy: 0.6,
+      Romance: 1,
+      Family: 0.8,
+      Animation: 0.4,
+    };
+
+    it('reorders a small similarity gap only when mood is present', () => {
+      const pool = [
+        { ...candidate(1, ORTHOGONAL, 0.8), genres: ['Comedy', 'Romance'] },
+        { ...candidate(2, TASTE_ALIGNED, 0.9), genres: ['Crime', 'Thriller'] },
+      ];
+
+      expect(orderPoolByQuality(pool, 0).map((entry) => entry.movieId)).toEqual([2, 1]);
+      expect(orderPoolByQuality(pool, 0, LIGHTHEARTED).map((entry) => entry.movieId)).toEqual([
+        1, 2,
+      ]);
+      expect(selectDiverse(pool, { limit: 2, penalty: 0 }).map((pick) => pick.movieId)).toEqual([
+        2, 1,
+      ]);
+      expect(
+        selectDiverse(pool, { limit: 2, penalty: 0, mood: LIGHTHEARTED }).map(
+          (pick) => pick.movieId,
+        ),
+      ).toEqual([1, 2]);
+    });
+
+    it('does not overturn a 0.20 similarity gap', () => {
+      // The largest mood boost (0.18) is below this 0.20 gap, so the incumbent
+      // stays ahead; the mood candidate has the higher id to prove no overtake.
+      const pool = [
+        { ...candidate(10, ORTHOGONAL, 0.75), genres: ['Romance'] },
+        { ...candidate(2, TASTE_ALIGNED, 0.95), genres: ['Crime'] },
+      ];
+
+      const result = selectDiverse(pool, { limit: 1, mood: LIGHTHEARTED });
+      const widerGap = [
+        { ...candidate(1, ORTHOGONAL, 0.74), genres: ['Romance'] },
+        { ...candidate(2, TASTE_ALIGNED, 0.95), genres: ['Crime'] },
+      ];
+
+      expect(result.map((pick) => pick.movieId)).toEqual([2]);
+      // A gap above the cap cannot be overturned even when id order favours the
+      // mood candidate.
+      expect(
+        selectDiverse(widerGap, { limit: 1, mood: LIGHTHEARTED }).map((pick) => pick.movieId),
+      ).toEqual([2]);
+    });
+
+    it('returns identical output when mood is explicitly null as when it is absent', () => {
+      const pool = [
+        { ...candidate(1, TASTE_ALIGNED, 0.8, 7, 500), genres: ['Comedy'] },
+        { ...candidate(2, DIVERSE, 0.8, 8, 500), genres: ['Drama'] },
+        { ...candidate(3, ORTHOGONAL, 0.76, 6, 500), genres: ['Romance'] },
+      ];
+
+      expect(orderPoolByQuality(pool, 0.25, null)).toEqual(orderPoolByQuality(pool, 0.25));
+      expect(selectDiverse(pool, { limit: 3, penalty: 0.3, mood: null })).toEqual(
+        selectDiverse(pool, { limit: 3, penalty: 0.3 }),
+      );
+    });
+
+    it('honours an evaluation boost override while the default equals the shipped constant', () => {
+      const pool = [
+        { ...candidate(2, TASTE_ALIGNED, 0.9), genres: ['Crime'] },
+        { ...candidate(1, ORTHOGONAL, 0.86), genres: ['Romance'] },
+      ];
+
+      const noBoost = selectDiverse(pool, {
+        limit: 1,
+        penalty: 0,
+        mood: LIGHTHEARTED,
+        moodBoostWeight: 0,
+      });
+      const shippedDefault = selectDiverse(pool, { limit: 1, penalty: 0, mood: LIGHTHEARTED });
+      const explicitDefault = selectDiverse(pool, {
+        limit: 1,
+        penalty: 0,
+        mood: LIGHTHEARTED,
+        moodBoostWeight: MOOD_BOOST_WEIGHT,
+      });
+
+      expect(noBoost.map((pick) => pick.movieId)).toEqual([2]);
+      expect(shippedDefault.map((pick) => pick.movieId)).toEqual([1]);
+      expect(explicitDefault).toEqual(shippedDefault);
+      expect(
+        orderPoolByQuality(pool, 0, LIGHTHEARTED, 0).map((candidate) => candidate.movieId),
+      ).toEqual([2, 1]);
+      expect(
+        orderPoolByQuality(pool, 0, LIGHTHEARTED).map((candidate) => candidate.movieId),
+      ).toEqual([1, 2]);
     });
   });
 

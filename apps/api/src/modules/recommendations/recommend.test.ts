@@ -320,6 +320,21 @@ describe.skipIf(!process.env.DATABASE_URL)('recommendMovies', () => {
     expect(coldStart).toEqual({ movieIds: [], coldStart: true });
   });
 
+  it('returns identical results when mood is explicitly null', async () => {
+    const base = { tasteVector: TASTE_VECTOR, candidateIds: FIXTURE_IDS, limit: 3 };
+    const implicit = await recommendMovies(db, base);
+    const explicit = await recommendMovies(db, { ...base, mood: null });
+    const coldImplicit = await recommendMovies(db, { candidateIds: FIXTURE_IDS, limit: 3 });
+    const coldExplicit = await recommendMovies(db, {
+      candidateIds: FIXTURE_IDS,
+      limit: 3,
+      mood: null,
+    });
+
+    expect(explicit).toEqual(implicit);
+    expect(coldExplicit).toEqual(coldImplicit);
+  });
+
   it('does not mutate the input object', async () => {
     const input = {
       tasteVector: TASTE_VECTOR,

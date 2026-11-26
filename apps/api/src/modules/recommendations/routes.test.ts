@@ -1,5 +1,7 @@
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { and, gte, lte } from 'drizzle-orm';
 import express, { type ErrorRequestHandler } from 'express';
 import type { Pool } from 'pg';
@@ -165,6 +167,14 @@ interface RecommendationBody {
 interface ErrorBody {
   error: { code: string; message: string; details?: unknown };
 }
+
+describe('recommendation route evaluation boundary', () => {
+  it('never passes the evaluation-only mood boost override', async () => {
+    const source = await readFile(fileURLToPath(new URL('./routes.ts', import.meta.url)), 'utf8');
+
+    expect(source).not.toContain('moodBoostWeight');
+  });
+});
 
 describe.skipIf(!process.env.DATABASE_URL)('recommendation routes', () => {
   let pool: Pool;

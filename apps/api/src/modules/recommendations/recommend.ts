@@ -1,4 +1,5 @@
 import type { Database } from '../../db/client.js';
+import type { MoodGenreWeights } from './mood.js';
 import { findColdStartPool, findNearestMovies } from './query.js';
 import {
   MAX_RECOMMENDATIONS,
@@ -21,6 +22,9 @@ export interface RecommendMoviesInput {
   excludeIds?: readonly number[];
   candidateIds?: readonly number[];
   exploration?: number;
+  mood?: MoodGenreWeights | null;
+  /** Evaluation-only override; the HTTP route never sets it. */
+  moodBoostWeight?: number;
   limit: number;
 }
 
@@ -116,10 +120,21 @@ export async function recommendMovies(
         embedding: input.tasteVector,
         ...eligibility,
       });
-      const pool = orderPoolByQuality(buffer, QUALITY_TILT_WEIGHT).slice(0, CANDIDATE_POOL_SIZE);
+      const pool = orderPoolByQuality(
+        buffer,
+        QUALITY_TILT_WEIGHT,
+        input.mood ?? null,
+        input.moodBoostWeight,
+      ).slice(0, CANDIDATE_POOL_SIZE);
 
       return {
-        movieIds: selectDiverse(pool, { limit: input.limit }).map((pick) => pick.movieId),
+        movieIds: selectDiverse(pool, {
+          limit: input.limit,
+          mood: input.mood ?? null,
+          ...(input.moodBoostWeight === undefined
+            ? {}
+            : { moodBoostWeight: input.moodBoostWeight }),
+        }).map((pick) => pick.movieId),
         coldStart: false,
       };
     }
@@ -136,7 +151,11 @@ export async function recommendMovies(
     });
 
     return {
-      movieIds: selectDiverse(pool, { limit: input.limit }).map((pick) => pick.movieId),
+      movieIds: selectDiverse(pool, {
+        limit: input.limit,
+        mood: input.mood ?? null,
+        ...(input.moodBoostWeight === undefined ? {} : { moodBoostWeight: input.moodBoostWeight }),
+      }).map((pick) => pick.movieId),
       coldStart: false,
     };
   }
@@ -147,9 +166,11 @@ export async function recommendMovies(
   });
 
   return {
-    movieIds: selectDiverse(rankAsRelevance(pool), { limit: input.limit }).map(
-      (pick) => pick.movieId,
-    ),
+    movieIds: selectDiverse(rankAsRelevance(pool), {
+      limit: input.limit,
+      mood: input.mood ?? null,
+      ...(input.moodBoostWeight === undefined ? {} : { moodBoostWeight: input.moodBoostWeight }),
+    }).map((pick) => pick.movieId),
     coldStart: true,
   };
 }

@@ -1,3 +1,4 @@
+import { moodGenreScore, type MoodGenreWeights } from './mood.js';
 import type { ScoredCandidate } from './types.js';
 
 export const DEFAULT_DIVERSITY_PENALTY = 0.3;
@@ -47,21 +48,27 @@ export function qualityScore(voteAverage: number | null, voteCount: number | nul
 }
 
 /**
- * Orders a retrieval buffer by `similarity + weight * quality`, tie-breaking by
- * movie id, and returns a new array. The pool-stage tilt uses this to reorder the
- * top-500 cosine buffer before slicing the production pool.
+ * Orders a retrieval buffer by `similarity + weight * quality + mood`, tie-
+ * breaking by movie id, and returns a new array. The pool-stage tilt uses this
+ * to reorder the top-500 cosine buffer before slicing the production pool. When
+ * no mood is supplied the ordering is unchanged.
  */
 export function orderPoolByQuality(
   candidates: readonly ScoredCandidate[],
   weight: number,
+  mood?: MoodGenreWeights | null,
+  moodBoostWeight?: number,
 ): ScoredCandidate[] {
   validateWeight(weight);
 
   return [...candidates].sort((left, right) => {
     const difference =
       right.similarity +
-      weight * qualityScore(right.voteAverage, right.voteCount) -
-      (left.similarity + weight * qualityScore(left.voteAverage, left.voteCount));
+      weight * qualityScore(right.voteAverage, right.voteCount) +
+      moodGenreScore(right.genres, mood ?? null, moodBoostWeight) -
+      (left.similarity +
+        weight * qualityScore(left.voteAverage, left.voteCount) +
+        moodGenreScore(left.genres, mood ?? null, moodBoostWeight));
 
     if (difference !== 0) {
       return difference;
@@ -71,10 +78,14 @@ export function orderPoolByQuality(
   });
 }
 
-function relevance(candidate: ScoredCandidate): number {
+function relevance(
+  candidate: ScoredCandidate,
+  mood: MoodGenreWeights | null,
+  moodBoostWeight: number | undefined,
+): number {
   const tilt = QUALITY_TILT_WEIGHT * qualityScore(candidate.voteAverage, candidate.voteCount);
 
-  return candidate.similarity + tilt;
+  return candidate.similarity + tilt + moodGenreScore(candidate.genres, mood, moodBoostWeight);
 }
 
 export interface SelectedRecommendation {
@@ -195,8 +206,10 @@ function scoreCandidate(
   candidate: ScoredCandidate,
   selected: readonly ScoredCandidate[],
   penalty: number,
+  mood: MoodGenreWeights | null,
+  moodBoostWeight: number | undefined,
 ): number {
-  const baseScore = relevance(candidate);
+  const baseScore = relevance(candidate, mood, moodBoostWeight);
 
   if (selected.length === 0) {
     return baseScore;
@@ -217,11 +230,17 @@ function scoreCandidate(
 
 export function selectDiverse(
   candidates: readonly ScoredCandidate[],
-  options: { limit: number; penalty?: number },
+  options: {
+    limit: number;
+    penalty?: number;
+    mood?: MoodGenreWeights | null;
+    moodBoostWeight?: number;
+  },
 ): SelectedRecommendation[] {
   validateLimit(options.limit);
 
   const penalty = options.penalty ?? DEFAULT_DIVERSITY_PENALTY;
+  const mood = options.mood ?? null;
 
   validatePenalty(penalty);
   validateCandidates(candidates);
@@ -238,7 +257,7 @@ export function selectDiverse(
         continue;
       }
 
-      const score = scoreCandidate(candidate, selected, penalty);
+      const score = scoreCandidate(candidate, selected, penalty, mood, options.moodBoostWeight);
 
       if (
         best === undefined ||
