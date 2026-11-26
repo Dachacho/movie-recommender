@@ -300,8 +300,8 @@ describe('Dashboard', () => {
 
     expect(rows).toHaveLength(10);
 
-    const labels = ['0.5 stars:', '1 star:', '1.5 stars:', '2 stars:', '2.5 stars:'];
-    const upperLabels = ['3 stars:', '3.5 stars:', '4 stars:', '4.5 stars:', '5 stars:'];
+    const labels = ['½ star:', '1 star:', '1½ stars:', '2 stars:', '2½ stars:'];
+    const upperLabels = ['3 stars:', '3½ stars:', '4 stars:', '4½ stars:', '5 stars:'];
 
     for (const label of [...labels, ...upperLabels]) {
       expect(within(spread).getByText(label)).toBeTruthy();
@@ -313,10 +313,10 @@ describe('Dashboard', () => {
       '100%',
     );
 
-    const fourAndAHalf = within(spread).getByText('4.5 stars:').closest('li');
+    const fourAndAHalf = within(spread).getByText('4½ stars:').closest('li');
     expect(fourAndAHalf?.textContent).toContain('1 rated film');
 
-    const halfStar = within(spread).getByText('0.5 stars:').closest('li');
+    const halfStar = within(spread).getByText('½ star:').closest('li');
     expect(halfStar?.textContent).toContain('0 rated films');
     expect(halfStar?.querySelector<HTMLElement>('.dashboard__histogram-bar')?.style.width).toBe(
       '0%',
@@ -339,7 +339,7 @@ describe('Dashboard', () => {
 
     renderDashboard(profile, fakeLookup([ARRIVAL, HEAT, THE_LIGHTHOUSE]));
 
-    const rated = await screen.findByRole('region', { name: 'Rated films' });
+    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
     const rows = within(rated).getAllByRole('listitem');
 
     expect(rows.map((row) => row.querySelector('.dashboard__row-title')?.textContent)).toEqual([
@@ -391,7 +391,7 @@ describe('Dashboard', () => {
 
     renderDashboard(profile, lookup);
 
-    const rated = await screen.findByRole('region', { name: 'Rated films' });
+    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
     const watchlist = screen.getByRole('region', { name: 'Watchlist' });
 
     expect(within(rated).getAllByRole('listitem')).toHaveLength(5);
@@ -612,7 +612,7 @@ describe('Dashboard', () => {
 
     await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.');
 
-    const heading = screen.getByRole('heading', { name: 'Rated films' });
+    const heading = screen.getByRole('heading', { name: 'Recently rated films' });
 
     await waitFor(() => expect(document.activeElement).toBe(heading));
   });
@@ -686,7 +686,7 @@ describe('Dashboard', () => {
 
     const recent = screen.getByRole('region', { name: 'Recent picks' });
     expect(within(recent).getByText('23 Nov 2026, 09:05')).toBeTruthy();
-    expect(within(recent).getByText('Whole catalog')).toBeTruthy();
+    expect(within(recent).getByText('The whole catalog')).toBeTruthy();
     expect(within(recent).getByText('Watchlist')).toBeTruthy();
     expect(within(recent).getByText('Rewatch shortlist')).toBeTruthy();
     expect(within(recent).getByText('Pasted list')).toBeTruthy();

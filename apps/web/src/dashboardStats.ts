@@ -62,6 +62,10 @@ export function recentActivity(
 }
 
 export function formatRating(rating: number): string {
+  if (rating === 0.5) {
+    return '½';
+  }
+
   if (rating % 1 === 0.5) {
     return `${Math.floor(rating)}½`;
   }

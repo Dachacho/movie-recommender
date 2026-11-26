@@ -51,7 +51,7 @@ describe('meanRating', () => {
 
 describe('formatRating', () => {
   it.each([
-    [0.5, '0½'],
+    [0.5, '½'],
     [3, '3'],
     [4.5, '4½'],
     [5, '5'],

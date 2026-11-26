@@ -89,7 +89,7 @@ const MONTH_NAMES = [
 ] as const;
 
 const SOURCE_LABELS: Record<HistoryEntry['source'], string> = {
-  catalog: 'Whole catalog',
+  catalog: 'The whole catalog',
   watchlist: 'Watchlist',
   rewatch: 'Rewatch shortlist',
   paste: 'Pasted list',
@@ -117,7 +117,7 @@ function formatTimestamp(timestamp: number): string {
 }
 
 function ratingLabel(rating: number): string {
-  return `${rating} ${rating === 1 ? 'star' : 'stars'}`;
+  return `${formatRating(rating)} ${rating <= 1 ? 'star' : 'stars'}`;
 }
 
 function countLabel(count: number): string {
@@ -542,7 +542,7 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
                 ref={ratingsHeadingRef}
                 tabIndex={-1}
               >
-                Rated films
+                Recently rated films
               </h3>
 
               {removeRatingError !== null && (
