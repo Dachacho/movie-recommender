@@ -4,7 +4,7 @@
 Remove the friction of choosing a movie. One click should yield one main pick and three alternatives. Aim for a decision within 60 seconds and a warm recommendation response within five seconds. Do not turn film discovery into a quiz or an AI film critic.
 
 ## MVP
-- Responsive website and installable PWA; guest-first, persistent local profile. Optional accounts and guest migration after the core experience works.
+- Responsive website; guest-first, persistent local profile. Optional accounts and guest migration after the core experience works.
 - Three recommendation sources: entire catalog, personal watchlist, supplied Letterboxd list (URL only if permitted; otherwise CSV or pasted list contents).
 - Optional natural-language direction and quick mood/runtime controls. No mandatory onboarding. Import Letterboxd CSV or supply initial preferences; allow immediate use without either.
 - Show poster, title, year, director, runtime, spoiler-free synopsis and Letterboxd link when reliably resolved. Optional factual explanation; no fabricated match percentages.
