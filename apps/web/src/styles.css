@@ -560,7 +560,7 @@ body {
   align-items: center;
   min-height: 36px;
   padding: 6px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--control-radius);
   color: var(--ink-2);
   font-size: 0.8125rem;
   font-weight: 500;
