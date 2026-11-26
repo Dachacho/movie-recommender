@@ -1,19 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { parsePromptConstraints } from '../modules/recommendations/constraints.js';
+import { parsePromptMood } from '../modules/recommendations/mood.js';
 import { CANONICAL_GENRES, PROMPT_CASES, type PromptCaseGroup } from './prompt-cases.js';
 
 const GROUPS: readonly PromptCaseGroup[] = ['explicit', 'soft', 'edge', 'control'];
 const CANONICAL = new Set<string>(CANONICAL_GENRES);
 
-describe('prompt case dataset', () => {
-  it('contains at least 24 cases across all four groups', () => {
-    expect(PROMPT_CASES.length).toBeGreaterThanOrEqual(24);
+function countGroup(group: PromptCaseGroup): number {
+  return PROMPT_CASES.filter((promptCase) => promptCase.group === group).length;
+}
 
-    for (const group of GROUPS) {
-      expect(
-        PROMPT_CASES.filter((promptCase) => promptCase.group === group).length,
-      ).toBeGreaterThan(0);
-    }
+describe('prompt case dataset', () => {
+  it('contains the counted set across all four groups', () => {
+    expect(PROMPT_CASES).toHaveLength(35);
+    expect(Object.fromEntries(GROUPS.map((group) => [group, countGroup(group)]))).toEqual({
+      explicit: 7,
+      soft: 11,
+      edge: 11,
+      control: 6,
+    });
+    expect(
+      PROMPT_CASES.filter((promptCase) => promptCase.expectedFilters !== undefined),
+    ).toHaveLength(16);
+    expect(
+      PROMPT_CASES.filter((promptCase) => Object.keys(promptCase.genreWeights).length > 0),
+    ).toHaveLength(24);
   });
 
   it('uses unique ids and prompts', () => {
@@ -41,10 +52,33 @@ describe('prompt case dataset', () => {
     }
   });
 
-  it('keeps soft prompts free of hard filters but keeps their genre labels', () => {
+  it('keeps soft prompts semantically labelled', () => {
     for (const promptCase of PROMPT_CASES.filter((entry) => entry.group === 'soft')) {
-      expect(promptCase.expectedFilters).toBeUndefined();
       expect(Object.keys(promptCase.genreWeights).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('hard-filters only the labelled soft case whose prompt names Comedy', () => {
+    const filteredSoft = PROMPT_CASES.filter(
+      (entry) => entry.group === 'soft' && entry.expectedFilters !== undefined,
+    );
+
+    expect(filteredSoft.map((entry) => entry.id)).toEqual(['soft-lighthearted-first-date']);
+    expect(filteredSoft[0]?.expectedFilters).toEqual({ genres: ['Comedy'] });
+  });
+
+  it('splits mood-phrase cases into two tune and two holdout cases', () => {
+    const moodCases = PROMPT_CASES.filter((entry) => entry.moodSplit !== undefined);
+
+    expect(moodCases.map((entry) => `${entry.moodSplit ?? ''}:${entry.id}`).sort()).toEqual([
+      'holdout:soft-cozy-rainy-night',
+      'holdout:soft-lighthearted-first-date',
+      'tune:edge-lighthearted-girlfriend',
+      'tune:soft-feel-good-date',
+    ]);
+
+    for (const promptCase of moodCases) {
+      expect(parsePromptMood(promptCase.prompt)).not.toBeNull();
     }
   });
 });

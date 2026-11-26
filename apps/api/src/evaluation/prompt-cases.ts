@@ -44,6 +44,11 @@ export interface PromptCase {
   expectedFilters: RecommendationFilters | undefined;
   /** Graded genre relevance; empty for controls and for prompts with no genre signal. */
   genreWeights: GenreWeights;
+  /**
+   * Evaluation split for mood-phrase cases only. Tune cases inform the boost
+   * weight; holdout cases validate it and never inform the choice.
+   */
+  moodSplit?: 'tune' | 'holdout';
 }
 
 /**
@@ -172,6 +177,30 @@ export const PROMPT_CASES: readonly PromptCase[] = [
     expectedFilters: undefined,
     genreWeights: { Romance: 0.8, War: 0.7 },
   },
+  {
+    id: 'soft-feel-good-date',
+    prompt: 'a feel-good movie for date night',
+    group: 'soft',
+    expectedFilters: undefined,
+    genreWeights: { Comedy: 1, Romance: 0.6 },
+    moodSplit: 'tune',
+  },
+  {
+    id: 'soft-cozy-rainy-night',
+    prompt: 'a cozy movie for a rainy night',
+    group: 'soft',
+    expectedFilters: undefined,
+    genreWeights: { Comedy: 0.8, Family: 0.5, Romance: 0.4 },
+    moodSplit: 'holdout',
+  },
+  {
+    id: 'soft-lighthearted-first-date',
+    prompt: 'a lighthearted comedy for a first date',
+    group: 'soft',
+    expectedFilters: { genres: ['Comedy'] },
+    genreWeights: { Comedy: 1, Romance: 0.6 },
+    moodSplit: 'holdout',
+  },
 
   // Edge: prompts the current parser handles incompletely. Every label is a
   // constraint the existing filter semantics can express.
@@ -257,6 +286,7 @@ export const PROMPT_CASES: readonly PromptCase[] = [
     group: 'edge',
     expectedFilters: { genres: ['Comedy'] },
     genreWeights: { Comedy: 1, Romance: 0.5 },
+    moodSplit: 'tune',
   },
 
   // Control: vague prompts with no filter and no genre signal.
