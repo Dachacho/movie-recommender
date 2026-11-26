@@ -441,9 +441,17 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
       {tab === 'rated' && (
         <div className="library__collection">
           {rated.length === 0 ? (
-            <p className="library__empty">
-              No rated films yet. <a href="#library/find">Find films to rate.</a>
-            </p>
+            <div className="library__empty">
+              <p className="library__empty-title">No rated films yet.</p>
+              <p className="library__empty-copy">
+                Rate a few films and the picks start to follow your taste.
+              </p>
+              <div className="library__empty-actions">
+                <a className="button--secondary" href="#library/find">
+                  Find films to rate
+                </a>
+              </div>
+            </div>
           ) : (
             <>
               <ul className="library__results" aria-label="Rated films" aria-busy={!titlesSettled}>
@@ -497,9 +505,15 @@ export function Library({ profile, tab = 'rated', lookup }: LibraryProps) {
       {tab === 'watchlist' && (
         <div className="library__collection">
           {watchlist.length === 0 ? (
-            <p className="library__empty">
-              Nothing on your watchlist yet. <a href="#library/find">Find films to save.</a>
-            </p>
+            <div className="library__empty">
+              <p className="library__empty-title">Nothing saved yet.</p>
+              <p className="library__empty-copy">Save a film and it stays here for later.</p>
+              <div className="library__empty-actions">
+                <a className="button--secondary" href="#library/find">
+                  Find films to save
+                </a>
+              </div>
+            </div>
           ) : (
             <>
               <ul

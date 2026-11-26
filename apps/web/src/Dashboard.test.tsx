@@ -716,9 +716,7 @@ describe('Dashboard', () => {
       await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.'),
     ).toBeTruthy();
     expect(screen.getByText('Nothing on your watchlist yet.')).toBeTruthy();
-    expect(
-      screen.getByText('No picks yet. Your recommendation rounds will appear here.'),
-    ).toBeTruthy();
+    expect(screen.getByText('No picks yet.')).toBeTruthy();
     expect(
       screen.getByText('No ratings yet, 0 rounds and 0 replacements in the last 7 days'),
     ).toBeTruthy();

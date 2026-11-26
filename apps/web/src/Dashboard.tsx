@@ -66,7 +66,7 @@ const PREVIEW_COUNT = 5;
 
 const EMPTY_RATINGS_MESSAGE = 'No ratings yet. Rate a film in your library to tune the picks.';
 const EMPTY_WATCHLIST_MESSAGE = 'Nothing on your watchlist yet.';
-const EMPTY_HISTORY_MESSAGE = 'No picks yet. Your recommendation rounds will appear here.';
+const EMPTY_HISTORY_MESSAGE = 'No picks yet.';
 
 const MONTH_NAMES = [
   'Jan',
@@ -491,7 +491,9 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               )}
 
               {ratedFilms.length === 0 ? (
-                <p className="dashboard__empty">{EMPTY_RATINGS_MESSAGE}</p>
+                <p className="dashboard__empty">
+                  {EMPTY_RATINGS_MESSAGE} <a href="#library/find">Find films to rate</a>
+                </p>
               ) : (
                 <>
                   <ul className="dashboard__rows" aria-busy={!titlesSettled}>
@@ -543,7 +545,9 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               {watchlistError !== null && <p className="status status--error">{watchlistError}</p>}
 
               {data.watchlistIds.length === 0 ? (
-                <p className="dashboard__empty">{EMPTY_WATCHLIST_MESSAGE}</p>
+                <p className="dashboard__empty">
+                  {EMPTY_WATCHLIST_MESSAGE} <a href="#library/find">Find films to save</a>
+                </p>
               ) : (
                 <>
                   <ul className="dashboard__rows" aria-busy={!titlesSettled}>
@@ -591,7 +595,9 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
             </h3>
 
             {recentHistory.length === 0 ? (
-              <p className="dashboard__empty">{EMPTY_HISTORY_MESSAGE}</p>
+              <p className="dashboard__empty">
+                {EMPTY_HISTORY_MESSAGE} <a href="#picks">Start a round</a>
+              </p>
             ) : (
               <ol className="dashboard__history">
                 {recentHistory.map((entry) => {
