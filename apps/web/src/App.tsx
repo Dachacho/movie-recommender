@@ -103,6 +103,10 @@ function routeFromHash(hash: string): Route {
   return { view: 'picks', libraryTab: 'rated' };
 }
 
+function sameRoute(left: Route, right: Route): boolean {
+  return left.view === right.view && left.libraryTab === right.libraryTab;
+}
+
 export interface AppProps {
   /** Injected in tests; the app uses a Dexie-backed profile. */
   profile?: GuestProfile;
@@ -462,6 +466,8 @@ function Alternatives({ movies, startIndex, disabled, pendingIndex, onReject }: 
 export function App({ profile: providedProfile }: AppProps = {}) {
   const [profile] = useState<GuestProfile>(() => providedProfile ?? createGuestProfile());
   const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
+  /** Set when a hashchange should move focus once the new view has rendered. */
+  const focusMainOnNavigation = useRef(false);
   const view = route.view;
   const [prompt, setPrompt] = useState('');
   const [sourceKind, setSourceKind] = useState<RecommendationSourceKind>('catalog');
@@ -481,7 +487,16 @@ export function App({ profile: providedProfile }: AppProps = {}) {
 
   useEffect(() => {
     function handleHashChange() {
-      setRoute(routeFromHash(window.location.hash));
+      const nextRoute = routeFromHash(window.location.hash);
+
+      // A hash that resolves to the current route is an in-page anchor, not a
+      // view change; leave focus where the guest put it.
+      if (sameRoute(nextRoute, route)) {
+        return;
+      }
+
+      focusMainOnNavigation.current = true;
+      setRoute(nextRoute);
     }
 
     window.addEventListener('hashchange', handleHashChange);
@@ -489,7 +504,19 @@ export function App({ profile: providedProfile }: AppProps = {}) {
     return () => {
       window.removeEventListener('hashchange', handleHashChange);
     };
-  }, []);
+  }, [route]);
+
+  // A view change replaces the main region. Move focus there after it renders
+  // so keyboard and screen-reader users do not stay on the nav. The initial
+  // route renders without this flag, so the first load never steals focus.
+  useEffect(() => {
+    if (!focusMainOnNavigation.current) {
+      return;
+    }
+
+    focusMainOnNavigation.current = false;
+    document.getElementById('main-content')?.focus();
+  }, [route]);
 
   function handleSourceChange(next: RecommendationSourceKind): void {
     setSourceKind(next);

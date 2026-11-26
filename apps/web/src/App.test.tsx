@@ -1816,6 +1816,32 @@ describe('view navigation', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('moves focus to the main content after a hash navigation but not on first render', async () => {
+    window.history.replaceState(null, '', '#picks');
+
+    render(<App profile={createProfile()} />);
+
+    expect(document.activeElement).toBe(document.body);
+
+    navigateTo('library');
+
+    expect(await screen.findByRole('heading', { name: 'Your library' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+  });
+
+  it('leaves focus alone when a hash change does not change the view', () => {
+    render(<App profile={createProfile()} />);
+
+    const promptInput = getPromptInput();
+    promptInput.focus();
+
+    window.history.replaceState(null, '', '#in-page-anchor');
+    fireEvent(window, new Event('hashchange'));
+
+    expect(document.activeElement).toBe(promptInput);
+    expect(getPromptInput()).toBe(promptInput);
+  });
+
   it('opens the library on the rated tab by default', async () => {
     const fetchMock = stubFetch();
     const profile = createProfile();
