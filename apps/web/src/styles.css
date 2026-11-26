@@ -56,6 +56,8 @@
   --danger-strong: #8a251c;
   --danger-wash: rgba(163, 45, 34, 0.08);
   --focus: #2f53d1;
+  /* Focus ring for controls on the dark .main-pick surface (9.72:1 vs #12140f). */
+  --focus-on-dark: #aab8ff;
   --on-ink: #fbfbf7;
   --header-bg: rgba(242, 242, 237, 0.82);
   --hover-wash: rgba(20, 21, 17, 0.045);
@@ -225,6 +227,13 @@ body {
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
+}
+
+/* The main landmark is a screen-reader focus target for hash navigation, not an
+   interactive control, so it must not draw the global focus ring. */
+#main-content:focus,
+#main-content:focus-visible {
+  outline: none;
 }
 
 /* Controls ----------------------------------------------------------------- */
@@ -1406,6 +1415,11 @@ body {
 .main-pick .pick-action {
   border-color: var(--screen-button-line);
   color: var(--screen-ink);
+}
+
+.main-pick a:focus-visible,
+.main-pick button:focus-visible {
+  outline-color: var(--focus-on-dark);
 }
 
 .main-pick .pick-action:hover:not(:disabled) {
@@ -2772,7 +2786,8 @@ body {
   .library__toggle,
   .import__file,
   .import__unmatched summary,
-  .theme-toggle {
+  .theme-toggle,
+  .switch-row {
     min-height: 44px;
   }
 
