@@ -372,16 +372,15 @@ kept for offline evaluation only.
 ## What I'd do next
 
 Nothing is promised: this is a finished portfolio project, not a maintained
-service. If it were continued:
+service. If it were continued, the two technical follow-ups are:
 
-- a one-command self-host bundle with a small demo catalogue, so the app can be
-  run without the author's database;
 - resolve the embedding batch-parity question and re-evaluate prompt/taste
   weights on the corrected vectors;
 - a batch catalogue lookup for the taste graph at large libraries.
 
-Deliberately not planned: CI, public hosting, accounts, PWA, catalogue growth,
-or further ranking tuning without new held-out evidence.
+Deliberately not planned: CI, public hosting, a one-command self-host bundle,
+accounts, PWA, catalogue growth, or further ranking tuning without new held-out
+evidence.
 
 ## More docs
 
