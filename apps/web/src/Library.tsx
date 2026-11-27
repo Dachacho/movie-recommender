@@ -8,7 +8,7 @@ import {
 } from './api';
 import { formatRating } from './dashboardStats';
 import { LetterboxdImport } from './LetterboxdImport';
-import { ratingFromHalfStarPosition, starFill } from './libraryRatings';
+import { ratingFromHalfStarPosition } from './libraryRatings';
 import { createMovieLookup, type MovieLookup } from './movieLookup';
 import type { GuestProfile } from './profile/GuestProfile';
 
@@ -20,8 +20,7 @@ type SearchState =
   | { status: 'results'; movies: MovieCard[] }
   | { status: 'error'; message: string };
 
-const STARS = [1, 2, 3, 4, 5] as const;
-const HALF_STARS = [0, 1] as const;
+const RATING_POSITIONS = Array.from({ length: 10 }, (_value, index) => index + 1);
 const PAGE_SIZE = 12;
 
 const SEARCH_ERROR_MESSAGE = 'Something went wrong while searching. Try again.';
@@ -91,39 +90,25 @@ interface RatingControlProps {
 
 function RatingControl({ movieId, title, rating, onSelect }: RatingControlProps) {
   return (
-    <div className="star-rating" role="radiogroup" aria-label={`Rating for ${title}`}>
-      {STARS.map((star) => {
-        const fill = starFill(rating ?? 0, star);
+    <div className="rating-scale" role="radiogroup" aria-label={`Rating for ${title}`}>
+      {RATING_POSITIONS.map((position) => {
+        const value = ratingFromHalfStarPosition(position);
 
         return (
-          <span className="star-rating__star" key={star}>
-            <span className="star-rating__glyph" aria-hidden="true">
-              ★
+          <label className="rating-scale__option" key={position}>
+            <input
+              type="radio"
+              className="rating-scale__input"
+              name={`rating-${movieId}`}
+              value={value}
+              checked={rating === value}
+              aria-label={ratingLabel(value)}
+              onChange={() => onSelect(value)}
+            />
+            <span className="rating-scale__label" aria-hidden="true">
+              {formatRating(value)}
             </span>
-            {fill !== 'empty' && (
-              <span className={`star-rating__fill star-rating__fill--${fill}`} aria-hidden="true">
-                ★
-              </span>
-            )}
-            {HALF_STARS.map((side) => {
-              const value = ratingFromHalfStarPosition((star - 1) * 2 + side + 1);
-
-              return (
-                <input
-                  key={side}
-                  type="radio"
-                  className={`star-rating__input star-rating__input--${
-                    side === 0 ? 'left' : 'right'
-                  }`}
-                  name={`rating-${movieId}`}
-                  value={value}
-                  checked={rating === value}
-                  aria-label={ratingLabel(value)}
-                  onChange={() => onSelect(value)}
-                />
-              );
-            })}
-          </span>
+          </label>
         );
       })}
     </div>

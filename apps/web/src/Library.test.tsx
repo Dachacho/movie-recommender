@@ -109,6 +109,17 @@ function importInput(): HTMLInputElement {
   return screen.getByLabelText('Import from Letterboxd') as HTMLInputElement;
 }
 
+async function findHeatRatingGroup(fetchMock: Mock<typeof fetch>): Promise<HTMLElement> {
+  fetchMock.mockResolvedValue(jsonResponse({ movies: [HEAT] }));
+
+  fireEvent.change(screen.getByLabelText('Find a film to rate'), {
+    target: { value: 'heat' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+  return screen.findByRole('radiogroup', { name: 'Rating for Heat' });
+}
+
 function selectFile(file: File): void {
   fireEvent.change(importInput(), { target: { files: [file] } });
 }
@@ -795,6 +806,71 @@ describe('Library search announcements', () => {
     expect(alert.textContent).toContain('Could not reach the recommendation service.');
     expect(screen.queryByText('Searching the catalog…')).toBeNull();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+});
+
+describe('Library rating scale', () => {
+  it('offers ten half-star options and marks the stored rating as checked', async () => {
+    const profile = createProfile();
+
+    await profile.setRating(HEAT.id, 3.5);
+
+    renderLibrary(profile);
+    const ratingGroup = await findHeatRatingGroup(stubFetch());
+    const options = within(ratingGroup).getAllByRole('radio');
+
+    expect(options).toHaveLength(10);
+    expect(options.map((option) => option.getAttribute('aria-label'))).toEqual([
+      '0.5 stars out of 5',
+      '1 star out of 5',
+      '1.5 stars out of 5',
+      '2 stars out of 5',
+      '2.5 stars out of 5',
+      '3 stars out of 5',
+      '3.5 stars out of 5',
+      '4 stars out of 5',
+      '4.5 stars out of 5',
+      '5 stars out of 5',
+    ]);
+    expect(options.map((option) => (option as HTMLInputElement).checked)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(within(ratingGroup).getByText('3½').getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('writes the lowest and highest half-star ratings through the profile', async () => {
+    const profile = createProfile();
+
+    renderLibrary(profile);
+    const ratingGroup = await findHeatRatingGroup(stubFetch());
+    const setRating = vi.spyOn(profile, 'setRating');
+    const halfStar = within(ratingGroup).getByRole('radio', { name: '0.5 stars out of 5' });
+    const fiveStars = within(ratingGroup).getByRole('radio', { name: '5 stars out of 5' });
+
+    fireEvent.click(halfStar);
+    await waitFor(() => expect(setRating).toHaveBeenCalledWith(HEAT.id, 0.5));
+    await expect(
+      profile
+        .getRatings()
+        .then((records) => records.map(({ movieId, rating }) => ({ movieId, rating }))),
+    ).resolves.toEqual([{ movieId: HEAT.id, rating: 0.5 }]);
+
+    fireEvent.click(fiveStars);
+    await waitFor(() => expect(setRating).toHaveBeenLastCalledWith(HEAT.id, 5));
+    await expect(
+      profile
+        .getRatings()
+        .then((records) => records.map(({ movieId, rating }) => ({ movieId, rating }))),
+    ).resolves.toEqual([{ movieId: HEAT.id, rating: 5 }]);
   });
 });
 

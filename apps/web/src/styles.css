@@ -1902,67 +1902,64 @@ body {
   margin-right: 4px;
 }
 
-/* Half-star control -------------------------------------------------------- */
+/* Rating scale ------------------------------------------------------------- */
 
-.star-rating {
-  display: inline-flex;
-  gap: 2px;
-}
-
-.star-rating__star {
-  position: relative;
-  display: block;
-  width: 1.125rem;
-  height: 1.375rem;
-  font-size: 1.0625rem;
-  line-height: 1.375rem;
-}
-
-.star-rating__glyph,
-.star-rating__fill {
-  position: absolute;
-  top: 0;
-  left: 0;
-}
-
-.star-rating__glyph {
-  color: var(--star-empty);
-}
-
-.star-rating__fill {
+.rating-scale {
+  display: inline-grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 1px;
   overflow: hidden;
-  color: var(--ink);
-  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: var(--line);
 }
 
-.star-rating__fill--half {
-  width: 50%;
-}
-
-.star-rating__input {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 50%;
-  margin: 0;
-  padding: 0;
-  appearance: none;
-  border: 0;
-  background: transparent;
+.rating-scale__option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 2px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
-.star-rating__input--left {
-  left: 0;
+.rating-scale__option:hover {
+  background: var(--hover-wash);
+  color: var(--ink);
 }
 
-.star-rating__input--right {
-  left: 50%;
+.rating-scale__option:has(input:checked) {
+  background: var(--ink);
+  color: var(--on-ink);
 }
 
-.star-rating__input:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
+.rating-scale__option:has(input:focus-visible) {
+  position: relative;
+  z-index: 1;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.rating-scale__option:has(input:checked):has(input:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--on-ink);
+}
+
+.rating-scale__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Import ------------------------------------------------------------------- */
@@ -2686,6 +2683,11 @@ body {
     justify-content: space-between;
   }
 
+  .rating-scale {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+  }
+
   .dashboard {
     margin-top: 34px;
   }
@@ -2795,8 +2797,9 @@ body {
     min-width: 44px;
   }
 
-  .star-rating {
-    padding-block: 10px;
+  .rating-scale__option {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .dashboard__remove {
