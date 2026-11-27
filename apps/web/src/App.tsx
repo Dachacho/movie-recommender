@@ -8,7 +8,7 @@ import {
   importLetterboxd,
   type TasteVector,
 } from './api';
-import { Dashboard } from './Dashboard';
+import { Dashboard, type DashboardTab } from './Dashboard';
 import { Library, type LibraryTab } from './Library';
 import { convertListPaste } from './listPaste';
 import { ThemeToggle } from './ThemeToggle';
@@ -80,6 +80,7 @@ type View = 'picks' | 'library' | 'dashboard';
 interface Route {
   view: View;
   libraryTab: LibraryTab;
+  dashboardTab: DashboardTab;
 }
 
 function libraryTabFromHash(hash: string): LibraryTab {
@@ -94,16 +95,29 @@ function libraryTabFromHash(hash: string): LibraryTab {
   return 'rated';
 }
 
+function dashboardTabFromHash(hash: string): DashboardTab {
+  switch (hash) {
+    case '#dashboard/breakdown':
+      return 'breakdown';
+    case '#dashboard/activity':
+      return 'activity';
+    case '#dashboard/data':
+      return 'data';
+    default:
+      return 'taste';
+  }
+}
+
 function routeFromHash(hash: string): Route {
-  if (hash === '#dashboard') {
-    return { view: 'dashboard', libraryTab: 'rated' };
+  if (hash === '#dashboard' || hash.startsWith('#dashboard/')) {
+    return { view: 'dashboard', libraryTab: 'rated', dashboardTab: dashboardTabFromHash(hash) };
   }
 
   if (hash.startsWith('#library')) {
-    return { view: 'library', libraryTab: libraryTabFromHash(hash) };
+    return { view: 'library', libraryTab: libraryTabFromHash(hash), dashboardTab: 'taste' };
   }
 
-  return { view: 'picks', libraryTab: 'rated' };
+  return { view: 'picks', libraryTab: 'rated', dashboardTab: 'taste' };
 }
 
 function sameRoute(left: Route, right: Route): boolean {
@@ -517,13 +531,17 @@ export function App({ profile: providedProfile }: AppProps = {}) {
     function handleHashChange() {
       const nextRoute = routeFromHash(window.location.hash);
 
-      // A hash that resolves to the current route is an in-page anchor, not a
-      // view change; leave focus where the guest put it.
-      if (sameRoute(nextRoute, route)) {
+      // A hash that resolves to the same view and library tab is an in-page
+      // anchor, not a view change. A dashboard tab change still updates the
+      // route, but it must not pull focus out of the tab list.
+      if (sameRoute(nextRoute, route) && nextRoute.dashboardTab === route.dashboardTab) {
         return;
       }
 
-      focusMainOnNavigation.current = true;
+      if (!sameRoute(nextRoute, route)) {
+        focusMainOnNavigation.current = true;
+      }
+
       setRoute(nextRoute);
     }
 
@@ -888,7 +906,7 @@ export function App({ profile: providedProfile }: AppProps = {}) {
         <SkipLink />
         <Masthead view={view} />
         <main id="main-content" tabIndex={-1} className="page page--dashboard">
-          <Dashboard profile={profile} />
+          <Dashboard profile={profile} tab={route.dashboardTab} />
         </main>
       </div>
     );

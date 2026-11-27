@@ -19,9 +19,11 @@ export interface TasteEdge {
 }
 
 export interface TasteGraph {
-  /** Top genres by film count, then name. */
+  /** Every genre by film count, then name; the tables and bars read this. */
+  allGenres: TasteGenre[];
+  /** The genres the constellation plots: the top `maxGenres`. */
   genres: TasteGenre[];
-  /** Strongest co-occurrences between kept genres, then pair names. */
+  /** Strongest co-occurrences between any genres, then pair names. */
   edges: TasteEdge[];
   /** Films with at least one genre; films without genres are ignored. */
   filmCount: number;
@@ -115,7 +117,7 @@ export function buildTasteGraph(
     }
   }
 
-  const genres = [...totals.entries()]
+  const allGenres = [...totals.entries()]
     .map(([genre, total]) => {
       const mean = total.ratingTotal / total.count;
 
@@ -126,12 +128,12 @@ export function buildTasteGraph(
         affinity: mean - AFFINITY_NEUTRAL_RATING,
       };
     })
-    .sort((left, right) => right.count - left.count || compareNames(left.genre, right.genre))
-    .slice(0, maxGenres);
+    .sort((left, right) => right.count - left.count || compareNames(left.genre, right.genre));
+  const genres = allGenres.slice(0, maxGenres);
 
-  const kept = new Set(genres.map((genre) => genre.genre));
+  // The constellation filters these pairs down to the nodes it draws, so the
+  // strongest pairs among every genre can reach the edge table intact.
   const edges = [...pairCounts.values()]
-    .filter((pair) => kept.has(pair.a) && kept.has(pair.b))
     .sort(
       (left, right) =>
         right.count - left.count || compareNames(left.a, right.a) || compareNames(left.b, right.b),
@@ -139,10 +141,11 @@ export function buildTasteGraph(
     .slice(0, maxEdges);
 
   return {
+    allGenres,
     genres,
     edges,
     filmCount,
     meanRating: filmCount === 0 ? 0 : ratingTotal / filmCount,
-    totalGenres: totals.size,
+    totalGenres: allGenres.length,
   };
 }

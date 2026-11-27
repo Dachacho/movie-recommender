@@ -59,6 +59,16 @@ describe('TasteConstellation', () => {
     expect(container.querySelectorAll('.taste-edge--dim')).toHaveLength(0);
   });
 
+  it('qualifies the genre table caption when some rated films are missing', () => {
+    const { getByText } = render(
+      <TasteConstellation graph={GRAPH} loading={false} ratedCount={5} />,
+    );
+
+    fireEvent.click(getByText('Read as a table'));
+
+    expect(getByText('All genres from 3 of 5 rated films with genres.')).toBeTruthy();
+  });
+
   it('shows a no-pairs line when no genres co-occur', () => {
     const graph = buildTasteGraph([
       { movieId: 1, rating: 4, genres: ['Drama'] },
@@ -72,6 +82,6 @@ describe('TasteConstellation', () => {
     fireEvent.click(getByText('Read as a table'));
 
     expect(getByText('No repeated genre pairs yet.')).toBeTruthy();
-    expect(queryByRole('table', { name: 'Co-occurring genres' })).toBeNull();
+    expect(queryByRole('table', { name: 'Co-occurring genres across all genres.' })).toBeNull();
   });
 });

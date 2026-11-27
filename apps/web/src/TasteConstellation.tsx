@@ -158,6 +158,35 @@ function emptyCopy(graph: TasteGraph): string {
   return `Rate ${remaining} more ${remaining === 1 ? 'film' : 'films'} to give the constellation enough points to draw.`;
 }
 
+function coverageLabel(graph: TasteGraph, ratedCount: number): string {
+  if (ratedCount === 0 || graph.filmCount >= ratedCount) {
+    return 'your rated films';
+  }
+
+  return `${String(graph.filmCount)} of ${String(ratedCount)} rated films with genres`;
+}
+
+/** The graph caps its nodes; both tables intentionally list every genre. */
+function genreTableCaption(graph: TasteGraph, ratedCount: number): string {
+  const scope = coverageLabel(graph, ratedCount);
+
+  if (graph.totalGenres > graph.genres.length) {
+    return `All ${String(graph.totalGenres)} genres from ${scope}; the constellation plots the top ${String(graph.genres.length)}.`;
+  }
+
+  return `All genres from ${scope}.`;
+}
+
+function edgeTableCaption(graph: TasteGraph, ratedCount: number): string {
+  const scope = coverageLabel(graph, ratedCount);
+
+  if (graph.totalGenres > graph.genres.length) {
+    return `Co-occurring genres across all ${String(graph.totalGenres)} genres from ${scope}; the constellation draws the pairs among its top ${String(graph.genres.length)} nodes.`;
+  }
+
+  return `Co-occurring genres across all genres from ${scope}.`;
+}
+
 export function TasteConstellation({ graph, loading, ratedCount }: TasteConstellationProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -356,7 +385,7 @@ export function TasteConstellation({ graph, loading, ratedCount }: TasteConstell
             <summary>Read as a table</summary>
             <div className="taste-table__scroll">
               <table>
-                <caption>Genres from your rated films, in constellation order.</caption>
+                <caption>{genreTableCaption(graph, ratedCount)}</caption>
                 <thead>
                   <tr>
                     <th scope="col">Genre</th>
@@ -366,7 +395,7 @@ export function TasteConstellation({ graph, loading, ratedCount }: TasteConstell
                   </tr>
                 </thead>
                 <tbody>
-                  {graph.genres.map((genre) => (
+                  {graph.allGenres.map((genre) => (
                     <tr key={genre.genre}>
                       <th scope="row">{genre.genre}</th>
                       <td>{genre.count}</td>
@@ -379,7 +408,7 @@ export function TasteConstellation({ graph, loading, ratedCount }: TasteConstell
 
               {graph.edges.length > 0 ? (
                 <table>
-                  <caption>Co-occurring genres</caption>
+                  <caption>{edgeTableCaption(graph, ratedCount)}</caption>
                   <thead>
                     <tr>
                       <th scope="col">Genres</th>

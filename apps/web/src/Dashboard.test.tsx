@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import type { MovieCard } from '@movie-recommender/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Dashboard } from './Dashboard';
+import { Dashboard, type DashboardTab } from './Dashboard';
 import { downloadTextFile } from './download';
 import type { MovieLookup } from './movieLookup';
 import { GuestProfile } from './profile/GuestProfile';
@@ -83,6 +84,8 @@ const THE_LIGHTHOUSE: MovieCard = {
   voteAverage: 7.2,
 };
 
+const SPRAWL_GENRES = Array.from({ length: 14 }, (_value, index) => `Genre ${String(index + 1)}`);
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -113,12 +116,28 @@ function snapshot(movie: MovieCard): HistoryEntry['movies'][number] {
   };
 }
 
-function renderDashboard(profile: GuestProfile, lookup: MovieLookup): ReturnType<typeof render> {
-  return render(<Dashboard profile={profile} lookup={lookup} now={() => NOW} />);
+function dashboardElement(
+  profile: GuestProfile,
+  lookup: MovieLookup,
+  tab: DashboardTab,
+): ReactElement {
+  return <Dashboard profile={profile} tab={tab} lookup={lookup} now={() => NOW} />;
+}
+
+function renderDashboard(
+  profile: GuestProfile,
+  lookup: MovieLookup,
+  tab: DashboardTab = 'taste',
+): ReturnType<typeof render> {
+  return render(dashboardElement(profile, lookup, tab));
+}
+
+function sprawlMovie(id: number): MovieCard {
+  return { ...ARRIVAL, id, title: `Genre Sprawl ${String(id)}`, genres: SPRAWL_GENRES };
 }
 
 describe('Dashboard', () => {
-  it('shows distinct counts, the mean rating and the activity window', async () => {
+  it('shows distinct counts, the mean rating, the activity window and a library link', async () => {
     const { profile, storage } = createProfile();
 
     storage.seedRatings([
@@ -172,6 +191,9 @@ describe('Dashboard', () => {
       (item) => item.textContent,
     );
     expect(counts).toEqual(['3 rated', '2 watched', '2 watchlisted', '1 cooling down']);
+
+    const libraryLink = screen.getByRole('link', { name: 'Open your library' });
+    expect(libraryLink.getAttribute('href')).toBe('#library/rated');
   });
 
   it('uses singular activity copy for a single round', async () => {
@@ -269,14 +291,9 @@ describe('Dashboard', () => {
       }),
     );
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'activity');
 
-    const summary = await screen.findByText(/in the last 7 days/);
-    expect(summary.textContent).toBe(
-      'No ratings yet, 12 rounds and 0 replacements in the last 7 days',
-    );
-
-    const recent = screen.getByRole('region', { name: 'Recent picks' });
+    const recent = await screen.findByRole('region', { name: 'Recent picks' });
     expect(within(recent).getAllByRole('listitem')).toHaveLength(10);
     expect(within(recent).getByText('Film 12')).toBeTruthy();
     expect(within(recent).getByText('Film 3')).toBeTruthy();
@@ -293,7 +310,7 @@ describe('Dashboard', () => {
       { movieId: 3, rating: 4.5, updatedAt: NOW - 1000 },
     ]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT]));
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT]), 'breakdown');
 
     const spread = await screen.findByRole('region', { name: 'Rating spread' });
     const rows = within(spread).getAllByRole('listitem');
@@ -328,102 +345,7 @@ describe('Dashboard', () => {
     ).toBe('true');
   });
 
-  it('resolves rated and watchlist titles from the lookup, newest rating first', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([
-      { movieId: 1, rating: 4, updatedAt: NOW - 2000 },
-      { movieId: 7, rating: 4.5, updatedAt: NOW - 1000 },
-    ]);
-    storage.seedWatchlist([{ movieId: 3, addedAt: NOW }]);
-
-    renderDashboard(profile, fakeLookup([ARRIVAL, HEAT, THE_LIGHTHOUSE]));
-
-    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
-    const rows = within(rated).getAllByRole('listitem');
-
-    expect(rows.map((row) => row.querySelector('.dashboard__row-title')?.textContent)).toEqual([
-      'The Lighthouse',
-      'Arrival',
-    ]);
-
-    expect(within(rated).getByText('4½ / 5')).toBeTruthy();
-    expect(within(rated).getByText('4 / 5')).toBeTruthy();
-    expect(within(rated).getByText('2019')).toBeTruthy();
-    expect(
-      within(rated).getByRole('button', { name: 'Remove rating for The Lighthouse' }),
-    ).toBeTruthy();
-
-    const watchlist = screen.getByRole('region', { name: 'Watchlist' });
-    expect(within(watchlist).getByText('Heat')).toBeTruthy();
-    expect(within(watchlist).getByText('1995')).toBeTruthy();
-    expect(
-      within(watchlist).getByRole('button', { name: 'Remove Heat from watchlist' }),
-    ).toBeTruthy();
-  });
-
-  it('previews five rows per panel and keeps the title batch to visible ids', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings(
-      Array.from({ length: 7 }, (_value, index) => ({
-        movieId: index + 1,
-        rating: 4,
-        updatedAt: NOW - index * 1000,
-      })),
-    );
-    storage.seedWatchlist(
-      Array.from({ length: 6 }, (_value, index) => ({
-        movieId: 101 + index,
-        addedAt: NOW - index * 1000,
-      })),
-    );
-
-    const baseLookup = fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2, THE_LIGHTHOUSE]);
-    const resolvedIds: number[][] = [];
-    const lookup: MovieLookup = {
-      resolveMany: async (ids) => {
-        resolvedIds.push([...ids]);
-
-        return baseLookup.resolveMany(ids);
-      },
-    };
-
-    renderDashboard(profile, lookup);
-
-    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
-    const watchlist = screen.getByRole('region', { name: 'Watchlist' });
-
-    expect(within(rated).getAllByRole('listitem')).toHaveLength(5);
-    expect(within(watchlist).getAllByRole('listitem')).toHaveLength(5);
-    expect(within(rated).getByText(/Showing 5 of 7\./)).toBeTruthy();
-    expect(within(watchlist).getByText(/Showing 5 of 6\./)).toBeTruthy();
-    expect(
-      within(rated).getByRole('link', { name: 'View all rated films.' }).getAttribute('href'),
-    ).toBe('#library');
-    expect(
-      within(watchlist)
-        .getByRole('link', { name: 'View all watchlist films.' })
-        .getAttribute('href'),
-    ).toBe('#library/watchlist');
-
-    const previewIds = [1, 2, 3, 4, 5, 101, 102, 103, 104, 105];
-    const tasteIds = [1, 2, 3, 4, 5, 6, 7];
-
-    await waitFor(() => {
-      expect(resolvedIds).toContainEqual(previewIds);
-      expect(resolvedIds).toContainEqual(tasteIds);
-    });
-
-    const previewCall = resolvedIds.find((ids) => ids.join(',') === previewIds.join(','));
-
-    expect(previewCall).toEqual(previewIds);
-    expect(previewCall).not.toContain(6);
-    expect(previewCall).not.toContain(7);
-    expect(previewCall).not.toContain(106);
-  });
-
-  it('maps every rated film into the constellation, table and genre bars', async () => {
+  it('maps every rated film into the constellation and its all-genre tables', async () => {
     const { profile, storage } = createProfile();
 
     storage.seedRatings([
@@ -447,12 +369,6 @@ describe('Dashboard', () => {
 
     renderDashboard(profile, lookup);
 
-    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
-
-    expect(within(rated).getAllByRole('listitem')).toHaveLength(5);
-    expect(within(rated).getByText('Arrival')).toBeTruthy();
-    expect(within(rated).getByText('Movie #5')).toBeTruthy();
-
     const taste = await screen.findByRole('region', { name: 'Taste constellation' });
 
     expect(await within(taste).findByText('4 of 6 rated films · mean 3.5')).toBeTruthy();
@@ -463,7 +379,9 @@ describe('Dashboard', () => {
 
     fireEvent.click(within(taste).getByText('Read as a table'));
 
-    const table = within(taste).getByRole('table', { name: /Genres from your rated films/ });
+    const table = within(taste).getByRole('table', {
+      name: 'All genres from 4 of 6 rated films with genres.',
+    });
     const rows = within(table).getAllByRole('row');
     const dramaRow = within(table).getByRole('rowheader', { name: 'Drama' }).closest('tr');
 
@@ -472,7 +390,9 @@ describe('Dashboard', () => {
     expect(dramaRow?.textContent).toContain('4.0');
     expect(dramaRow?.textContent).toContain('+1.5');
 
-    const edgesTable = within(taste).getByRole('table', { name: 'Co-occurring genres' });
+    const edgesTable = within(taste).getByRole('table', {
+      name: 'Co-occurring genres across all genres from 4 of 6 rated films with genres.',
+    });
     const edgeRow = within(edgesTable)
       .getByRole('rowheader', { name: 'Crime + Drama' })
       .closest('tr');
@@ -481,7 +401,27 @@ describe('Dashboard', () => {
     expect(within(edgesTable).getByRole('columnheader', { name: 'Films' })).toBeTruthy();
     expect(edgeRow?.textContent).toContain('1');
 
-    const bars = screen.getByRole('region', { name: 'Genre affinity' });
+    await waitFor(() => expect(resolvedIds).toContainEqual([1, 2, 3, 4, 5, 6]));
+  });
+
+  it('renders genre affinity bars for every rated film genre', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 5, updatedAt: NOW - 1000 },
+      { movieId: MOONLIGHT.id, rating: 4, updatedAt: NOW - 2000 },
+      { movieId: HEAT.id, rating: 3, updatedAt: NOW - 3000 },
+      { movieId: PADDINGTON_2.id, rating: 2, updatedAt: NOW - 4000 },
+      { movieId: 5, rating: 4, updatedAt: NOW - 5000 },
+      { movieId: 6, rating: 4, updatedAt: NOW - 6000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2]), 'breakdown');
+
+    const bars = await screen.findByRole('region', { name: 'Genre affinity' });
+
+    await within(bars).findByText('Science Fiction');
+
     const barRows = within(bars).getAllByRole('listitem');
 
     expect(barRows.map((row) => row.querySelector('.genre-affinity__genre')?.textContent)).toEqual([
@@ -494,8 +434,6 @@ describe('Dashboard', () => {
     expect(barRows[0]?.textContent).toContain('1 film · 5.0 avg');
     expect(barRows[0]?.querySelector('.genre-affinity__bar--positive')).toBeTruthy();
     expect(barRows[4]?.querySelector('.genre-affinity__bar--negative')).toBeTruthy();
-
-    await waitFor(() => expect(resolvedIds).toContainEqual([1, 2, 3, 4, 5, 6]));
   });
 
   it('scales genre bars against ±2.5 and prints the signed affinity', async () => {
@@ -508,7 +446,7 @@ describe('Dashboard', () => {
       { movieId: PADDINGTON_2.id, rating: 2.5, updatedAt: NOW - 4000 },
     ]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2]));
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2]), 'breakdown');
 
     const bars = await screen.findByRole('region', { name: 'Genre affinity' });
     const scienceFiction = await within(bars).findByText('Science Fiction');
@@ -533,20 +471,59 @@ describe('Dashboard', () => {
     expect(family?.querySelector<HTMLElement>('.genre-affinity__bar')?.style.width).toBe('0%');
   });
 
-  it('reports the kept genre cap in the constellation stat', async () => {
+  it('reports the kept genre cap and lists every genre in the constellation tables', async () => {
     const { profile, storage } = createProfile();
-    const sprawl: MovieCard = {
-      ...ARRIVAL,
-      id: 9,
-      title: 'Genre Sprawl',
-      genres: Array.from({ length: 14 }, (_value, index) => `Genre ${String(index + 1)}`),
-    };
+    const movies = [sprawlMovie(9), sprawlMovie(10), sprawlMovie(11)];
 
-    storage.seedRatings([{ movieId: sprawl.id, rating: 4, updatedAt: NOW }]);
+    storage.seedRatings([
+      { movieId: 9, rating: 4, updatedAt: NOW - 1000 },
+      { movieId: 10, rating: 4, updatedAt: NOW - 2000 },
+      { movieId: 11, rating: 4, updatedAt: NOW - 3000 },
+    ]);
 
-    renderDashboard(profile, fakeLookup([sprawl]));
+    renderDashboard(profile, fakeLookup(movies));
 
-    expect(await screen.findByText('1 film · mean 4.0 · top 12 of 14 genres')).toBeTruthy();
+    const taste = await screen.findByRole('region', { name: 'Taste constellation' });
+
+    expect(await within(taste).findByText('3 films · mean 4.0 · top 12 of 14 genres')).toBeTruthy();
+    expect(taste.querySelectorAll('.taste-node__hit')).toHaveLength(12);
+
+    fireEvent.click(within(taste).getByText('Read as a table'));
+
+    const genreTable = within(taste).getByRole('table', {
+      name: 'All 14 genres from your rated films; the constellation plots the top 12.',
+    });
+
+    expect(within(genreTable).getAllByRole('row')).toHaveLength(15);
+
+    const edgeTable = within(taste).getByRole('table', {
+      name: 'Co-occurring genres across all 14 genres from your rated films; the constellation draws the pairs among its top 12 nodes.',
+    });
+
+    expect(within(edgeTable).getAllByRole('row')).toHaveLength(25);
+    expect(within(edgeTable).getByRole('rowheader', { name: 'Genre 1 + Genre 9' })).toBeTruthy();
+  });
+
+  it('draws affinity bars for every genre, not just the top 12', async () => {
+    const { profile, storage } = createProfile();
+    const movies = [sprawlMovie(9), sprawlMovie(10), sprawlMovie(11)];
+
+    storage.seedRatings([
+      { movieId: 9, rating: 4, updatedAt: NOW - 1000 },
+      { movieId: 10, rating: 4, updatedAt: NOW - 2000 },
+      { movieId: 11, rating: 4, updatedAt: NOW - 3000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup(movies), 'breakdown');
+
+    const bars = await screen.findByRole('region', { name: 'Genre affinity' });
+
+    await within(bars).findByText('Genre 14');
+
+    const barRows = within(bars).getAllByRole('listitem');
+
+    expect(barRows).toHaveLength(14);
+    expect(within(bars).getByText('Genre 12')).toBeTruthy();
   });
 
   it('invalidates missing taste ids once and merges the retry', async () => {
@@ -588,16 +565,14 @@ describe('Dashboard', () => {
     expect(screen.queryByText('1 of 2 rated films · mean 3.5')).toBeNull();
   });
 
-  it('keeps preview rows visible while the all-ratings lookup is still pending', async () => {
+  it('keeps the constellation loading while the all-ratings lookup is pending', async () => {
     const { profile, storage } = createProfile();
 
     storage.seedRatings([
       { movieId: ARRIVAL.id, rating: 5, updatedAt: NOW - 1000 },
       { movieId: MOONLIGHT.id, rating: 4, updatedAt: NOW - 2000 },
       { movieId: HEAT.id, rating: 3, updatedAt: NOW - 3000 },
-      { movieId: 6, rating: 4, updatedAt: NOW - 4000 },
-      { movieId: 7, rating: 4, updatedAt: NOW - 5000 },
-      { movieId: 8, rating: 4, updatedAt: NOW - 6000 },
+      { movieId: 8, rating: 4, updatedAt: NOW - 4000 },
     ]);
 
     const baseLookup = fakeLookup([ARRIVAL, MOONLIGHT, HEAT]);
@@ -605,25 +580,16 @@ describe('Dashboard', () => {
       resolveMany: (ids) =>
         ids.includes(8)
           ? new Promise(() => {
-              // The taste pass stays pending; the preview batch must not wait for it.
+              // The taste pass stays pending; the counts must not wait for it.
             })
           : baseLookup.resolveMany(ids),
     };
 
     renderDashboard(profile, lookup);
 
-    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
-
-    expect(within(rated).getByText('Arrival')).toBeTruthy();
-    expect(within(rated).getByText('Heat')).toBeTruthy();
-    expect(within(rated).getByText('Movie #6')).toBeTruthy();
-
-    const taste = screen.getByRole('region', { name: 'Taste constellation' });
+    const taste = await screen.findByRole('region', { name: 'Taste constellation' });
 
     expect(within(taste).getByRole('status').textContent).toBe('Placing your genres…');
-    expect(screen.getByRole('region', { name: 'Genre affinity' }).textContent).toContain(
-      'Reading your genres…',
-    );
   });
 
   it('shows a composed taste empty state with a library link', async () => {
@@ -636,10 +602,16 @@ describe('Dashboard', () => {
 
     expect(link.getAttribute('href')).toBe('#library/find');
     expect(within(taste).getByText('Your constellation has no genres yet.')).toBeTruthy();
+  });
+
+  it('shows the genre-affinity empty state on the breakdown tab', async () => {
+    const { profile } = createProfile();
+
+    renderDashboard(profile, fakeLookup([]), 'breakdown');
+
+    const bars = await screen.findByRole('region', { name: 'Genre affinity' });
     expect(
-      within(screen.getByRole('region', { name: 'Genre affinity' })).getByText(
-        'Rate a few films and their genres will line up here.',
-      ),
+      await within(bars).findByText('Rate a few films and their genres will line up here.'),
     ).toBeTruthy();
   });
 
@@ -663,229 +635,45 @@ describe('Dashboard', () => {
     expect(taste.querySelector('svg')).toBeNull();
   });
 
-  it('keeps the fallback title when the lookup resolves nothing', async () => {
+  it('renders only the active tab and keeps the removed library lists off the dashboard', async () => {
     const { profile, storage } = createProfile();
+    const lookup = fakeLookup([ARRIVAL]);
 
-    storage.seedRatings([{ movieId: 7, rating: 4.5, updatedAt: NOW }]);
-    storage.seedWatchlist([{ movieId: 3, addedAt: NOW }]);
+    storage.seedRatings([{ movieId: ARRIVAL.id, rating: 4, updatedAt: NOW }]);
 
-    renderDashboard(profile, {
-      resolveMany: async (ids) => new Map(ids.map((movieId) => [movieId, null])),
-    });
+    const { rerender } = renderDashboard(profile, lookup);
 
-    expect(await screen.findByText('Movie #7')).toBeTruthy();
-    expect(screen.getByText('Movie #3')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Remove rating for Movie #7' })).toBeTruthy();
-  });
+    expect(await screen.findByRole('region', { name: 'Taste constellation' })).toBeTruthy();
+    await waitFor(() => expect(document.querySelectorAll('.dashboard__count')).toHaveLength(4));
+    expect(screen.queryByRole('region', { name: 'Rating spread' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Recent picks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Your data' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Recently rated films' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Watchlist' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Remove rating for/ })).toBeNull();
 
-  it('keeps the fallback title when the lookup rejects', async () => {
-    const { profile, storage } = createProfile();
+    rerender(dashboardElement(profile, lookup, 'breakdown'));
 
-    storage.seedRatings([{ movieId: 7, rating: 4.5, updatedAt: NOW }]);
+    expect(screen.getByRole('region', { name: 'Rating spread' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Genre affinity' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Taste constellation' })).toBeNull();
+    expect(document.querySelectorAll('.dashboard__count')).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: 'Recent picks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Your data' })).toBeNull();
 
-    renderDashboard(profile, {
-      resolveMany: () => Promise.reject(new Error('lookup unavailable')),
-    });
+    rerender(dashboardElement(profile, lookup, 'activity'));
 
-    expect(await screen.findByText('Movie #7')).toBeTruthy();
-  });
+    expect(screen.getByRole('region', { name: 'Recent picks' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Rating spread' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Taste constellation' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Your data' })).toBeNull();
 
-  it('drops titles resolved by an earlier load when a reload lookup rejects', async () => {
-    const { profile, storage } = createProfile();
+    rerender(dashboardElement(profile, lookup, 'data'));
 
-    storage.seedRatings([
-      { movieId: 1, rating: 4.5, updatedAt: NOW - 1000 },
-      { movieId: 2, rating: 4, updatedAt: NOW - 2000 },
-    ]);
-
-    let rejectLookups = false;
-    const lookup: MovieLookup = {
-      resolveMany: async (ids) => {
-        if (rejectLookups) {
-          throw new Error('lookup unavailable');
-        }
-
-        const byId = new Map<number, MovieCard | null>([
-          [ARRIVAL.id, ARRIVAL],
-          [MOONLIGHT.id, MOONLIGHT],
-        ]);
-
-        return new Map(ids.map((movieId) => [movieId, byId.get(movieId) ?? null]));
-      },
-    };
-
-    renderDashboard(profile, lookup);
-
-    const removeMoonlight = await screen.findByRole('button', {
-      name: 'Remove rating for Moonlight',
-    });
-
-    rejectLookups = true;
-    fireEvent.click(removeMoonlight);
-
-    expect(await screen.findByRole('button', { name: 'Remove rating for Movie #1' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Remove rating for Movie #2' })).toBeNull();
-    expect(screen.queryByText('Arrival')).toBeNull();
-  });
-
-  it('removes a rating through the profile and reloads the list', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([
-      { movieId: 1, rating: 4.5, updatedAt: NOW },
-      { movieId: 2, rating: 3, updatedAt: NOW - 1 },
-    ]);
-
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
-
-    const removeRating = vi.spyOn(profile, 'removeRating');
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove rating for Arrival' }));
-
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Remove rating for Arrival' })).toBeNull(),
-    );
-    expect(removeRating).toHaveBeenCalledWith(1);
-    expect(screen.getByRole('button', { name: 'Remove rating for Moonlight' })).toBeTruthy();
-    await expect(profile.getRatings()).resolves.toEqual([
-      { movieId: 2, rating: 3, updatedAt: NOW - 1 },
-    ]);
-  });
-
-  it('removes a watchlist film through the profile and reloads the list', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedWatchlist([
-      { movieId: 3, addedAt: NOW },
-      { movieId: 4, addedAt: NOW },
-    ]);
-
-    renderDashboard(profile, fakeLookup([HEAT, PADDINGTON_2]));
-
-    const removeFromWatchlist = vi.spyOn(profile, 'removeFromWatchlist');
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove Heat from watchlist' }));
-
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Remove Heat from watchlist' })).toBeNull(),
-    );
-    expect(removeFromWatchlist).toHaveBeenCalledWith(3);
-    expect(screen.getByText('Paddington 2')).toBeTruthy();
-    await expect(profile.getWatchlistIds()).resolves.toEqual([4]);
-  });
-
-  it('shows the rating removal error and keeps the rating row', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
-    vi.spyOn(profile, 'removeRating').mockRejectedValue(new Error('Quota exceeded'));
-
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove rating for Arrival' }));
-
-    expect(await screen.findByText('Could not remove that rating. Try again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Remove rating for Arrival' })).toBeTruthy();
-    await expect(profile.getRatings()).resolves.toEqual([
-      { movieId: 1, rating: 4.5, updatedAt: NOW },
-    ]);
-  });
-
-  it('shows the watchlist removal error and keeps the row', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedWatchlist([{ movieId: 3, addedAt: NOW }]);
-    vi.spyOn(profile, 'removeFromWatchlist').mockRejectedValue(new Error('Quota exceeded'));
-
-    renderDashboard(profile, fakeLookup([HEAT]));
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove Heat from watchlist' }));
-
-    expect(await screen.findByText('Could not change your watchlist. Try again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Remove Heat from watchlist' })).toBeTruthy();
-    await expect(profile.getWatchlistIds()).resolves.toEqual([3]);
-  });
-
-  it('moves focus to the next rating after removing one', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([
-      { movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW },
-      { movieId: MOONLIGHT.id, rating: 3, updatedAt: NOW - 1 },
-      { movieId: HEAT.id, rating: 4, updatedAt: NOW - 2 },
-    ]);
-
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT]));
-
-    const removeArrival = await screen.findByRole('button', { name: 'Remove rating for Arrival' });
-    removeArrival.focus();
-    fireEvent.click(removeArrival);
-
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Remove rating for Moonlight' }),
-      ),
-    );
-  });
-
-  it('moves focus to the previous rating after removing the last row', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([
-      { movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW },
-      { movieId: MOONLIGHT.id, rating: 3, updatedAt: NOW - 1 },
-    ]);
-
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
-
-    const removeMoonlight = await screen.findByRole('button', {
-      name: 'Remove rating for Moonlight',
-    });
-    removeMoonlight.focus();
-    fireEvent.click(removeMoonlight);
-
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Remove rating for Arrival' }),
-      ),
-    );
-  });
-
-  it('moves focus to the rated heading when the last rating is removed', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedRatings([{ movieId: ARRIVAL.id, rating: 4.5, updatedAt: NOW }]);
-
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
-
-    const removeArrival = await screen.findByRole('button', { name: 'Remove rating for Arrival' });
-    removeArrival.focus();
-    fireEvent.click(removeArrival);
-
-    await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.');
-
-    const heading = screen.getByRole('heading', { name: 'Recently rated films' });
-
-    await waitFor(() => expect(document.activeElement).toBe(heading));
-  });
-
-  it('moves focus to the next watchlist row after removing one', async () => {
-    const { profile, storage } = createProfile();
-
-    storage.seedWatchlist([
-      { movieId: HEAT.id, addedAt: NOW },
-      { movieId: PADDINGTON_2.id, addedAt: NOW },
-    ]);
-
-    renderDashboard(profile, fakeLookup([HEAT, PADDINGTON_2]));
-
-    const removeHeat = await screen.findByRole('button', { name: 'Remove Heat from watchlist' });
-    removeHeat.focus();
-    fireEvent.click(removeHeat);
-
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Remove Paddington 2 from watchlist' }),
-      ),
-    );
+    expect(screen.getByRole('region', { name: 'Your data' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Recent picks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Rating spread' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Taste constellation' })).toBeNull();
   });
 
   it('shows history timestamps, sources, prompts, kinds and picks', async () => {
@@ -930,7 +718,7 @@ describe('Dashboard', () => {
       },
     ]);
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'activity');
 
     expect(await screen.findByText('24 Nov 2026, 15:04')).toBeTruthy();
 
@@ -981,7 +769,7 @@ describe('Dashboard', () => {
       },
     ]);
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'activity');
 
     expect(await screen.findByText('Replaced Arrival')).toBeTruthy();
     expect(screen.getByText('Replaced one pick')).toBeTruthy();
@@ -1033,7 +821,7 @@ describe('Dashboard', () => {
       },
     ]);
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'activity');
 
     expect(await screen.findByText('Replaced Older Arrival')).toBeTruthy();
     expect(screen.queryByText('Replaced Newer Arrival')).toBeNull();
@@ -1051,24 +839,27 @@ describe('Dashboard', () => {
     expect(loading.getAttribute('role')).toBe('status');
 
     expect(
-      await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.'),
+      await screen.findByText('No ratings yet, 0 rounds and 0 replacements in the last 7 days'),
     ).toBeTruthy();
     expect(screen.queryByText('Loading your dashboard…')).toBeNull();
   });
 
-  it('shows the three empty states for a new guest', async () => {
+  it('shows the empty states for a new guest across the tabs', async () => {
     const { profile } = createProfile();
+    const lookup = fakeLookup([]);
 
-    renderDashboard(profile, fakeLookup([]));
+    const { rerender } = renderDashboard(profile, lookup);
 
     expect(
-      await screen.findByText('No ratings yet. Rate a film in your library to tune the picks.'),
+      await screen.findByText('No ratings yet, 0 rounds and 0 replacements in the last 7 days'),
     ).toBeTruthy();
-    expect(screen.getByText('Nothing on your watchlist yet.')).toBeTruthy();
+    expect(
+      Array.from(document.querySelectorAll('.dashboard__count')).map((item) => item.textContent),
+    ).toEqual(['0 rated', '0 watched', '0 watchlisted', '0 cooling down']);
+
+    rerender(dashboardElement(profile, lookup, 'activity'));
+
     expect(screen.getByText('No picks yet.')).toBeTruthy();
-    expect(
-      screen.getByText('No ratings yet, 0 rounds and 0 replacements in the last 7 days'),
-    ).toBeTruthy();
   });
 
   it('shows the load error when the profile cannot be read', async () => {
@@ -1102,7 +893,7 @@ describe('Dashboard your data', () => {
   it('disables the ratings export until a rating exists', async () => {
     const { profile } = createProfile();
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'data');
 
     const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
     const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
@@ -1115,7 +906,7 @@ describe('Dashboard your data', () => {
   it('exports an empty backup for a new guest', async () => {
     const { profile } = createProfile();
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'data');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Export backup (JSON)' }));
 
@@ -1139,7 +930,7 @@ describe('Dashboard your data', () => {
       { movieId: 2, rating: 3, updatedAt: NOW - 2000 },
     ]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]), 'data');
 
     const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
 
@@ -1174,7 +965,7 @@ describe('Dashboard your data', () => {
       { movieId: 99, rating: 3, updatedAt: NOW - 3000 },
     ]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Export ratings (CSV)' }));
 
@@ -1212,7 +1003,7 @@ describe('Dashboard your data', () => {
     ]);
     storage.seedHistory([historyEntry]);
 
-    renderDashboard(profile, fakeLookup([]));
+    renderDashboard(profile, fakeLookup([]), 'data');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Export backup (JSON)' }));
 
@@ -1239,7 +1030,7 @@ describe('Dashboard your data', () => {
 
     storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
     const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
@@ -1271,7 +1062,7 @@ describe('Dashboard your data', () => {
 
     storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     const exportRatings = await screen.findByRole('button', { name: 'Export ratings (CSV)' });
     const exportBackup = screen.getByRole('button', { name: 'Export backup (JSON)' });
@@ -1301,7 +1092,7 @@ describe('Dashboard your data', () => {
 
     storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     const clearAll = vi.spyOn(profile, 'clearAll');
 
@@ -1344,7 +1135,7 @@ describe('Dashboard your data', () => {
       },
     ]);
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     const clearAll = vi.spyOn(profile, 'clearAll');
 
@@ -1361,11 +1152,6 @@ describe('Dashboard your data', () => {
     await expect(profile.getCooldowns()).resolves.toEqual([]);
     await expect(profile.getHistory()).resolves.toEqual([]);
 
-    const counts = Array.from(document.querySelectorAll('.dashboard__count')).map(
-      (item) => item.textContent,
-    );
-
-    expect(counts).toEqual(['0 rated', '0 watched', '0 watchlisted', '0 cooling down']);
     expect(screen.queryByRole('button', { name: 'Delete everything' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Delete profile' })).toBeTruthy();
   });
@@ -1376,7 +1162,7 @@ describe('Dashboard your data', () => {
     storage.seedRatings([{ movieId: 1, rating: 4.5, updatedAt: NOW }]);
     vi.spyOn(profile, 'clearAll').mockRejectedValue(new Error('Quota exceeded'));
 
-    renderDashboard(profile, fakeLookup([ARRIVAL]));
+    renderDashboard(profile, fakeLookup([ARRIVAL]), 'data');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete profile' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete everything' }));
@@ -1385,6 +1171,8 @@ describe('Dashboard your data', () => {
     await expect(profile.getRatings()).resolves.toEqual([
       { movieId: 1, rating: 4.5, updatedAt: NOW },
     ]);
-    expect(screen.getByRole('button', { name: 'Remove rating for Arrival' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Export ratings (CSV)' }).hasAttribute('disabled'),
+    ).toBe(false);
   });
 });

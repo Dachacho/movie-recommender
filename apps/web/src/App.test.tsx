@@ -191,7 +191,7 @@ function renderApp(profile: GuestProfile = createProfile()): ReturnType<typeof r
   return render(<App profile={profile} />);
 }
 
-function navigateTo(path: 'picks' | 'library' | 'library/find' | 'dashboard'): void {
+function navigateTo(path: string): void {
   window.history.replaceState(null, '', `#${path}`);
   fireEvent(window, new Event('hashchange'));
 }
@@ -2059,5 +2059,56 @@ describe('view navigation', () => {
     expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe(
       'page',
     );
+  });
+
+  it('selects the dashboard tab from the hash and defaults to taste', async () => {
+    const cases = [
+      { hash: '#dashboard', tab: 'Taste', panel: 'Taste constellation' },
+      { hash: '#dashboard/taste', tab: 'Taste', panel: 'Taste constellation' },
+      { hash: '#dashboard/breakdown', tab: 'Breakdown', panel: 'Genre affinity' },
+      { hash: '#dashboard/activity', tab: 'Activity', panel: 'Recent picks' },
+      { hash: '#dashboard/data', tab: 'Data', panel: 'Your data' },
+    ] as const;
+
+    for (const item of cases) {
+      window.history.replaceState(null, '', item.hash);
+      render(<App profile={createProfile()} />);
+
+      expect(await screen.findByRole('heading', { name: 'Your dashboard' })).toBeTruthy();
+
+      const tabs = screen.getByRole('navigation', { name: 'Dashboard sections' });
+
+      expect(within(tabs).getByRole('link', { name: item.tab }).getAttribute('aria-current')).toBe(
+        'page',
+      );
+      expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe(
+        'page',
+      );
+      expect(await screen.findByRole('region', { name: item.panel })).toBeTruthy();
+
+      cleanup();
+    }
+  });
+
+  it('keeps focus in the dashboard tabs when only the tab changes', async () => {
+    window.history.replaceState(null, '', '#dashboard/taste');
+
+    render(<App profile={createProfile()} />);
+
+    await screen.findByRole('heading', { name: 'Your dashboard' });
+
+    const tabs = screen.getByRole('navigation', { name: 'Dashboard sections' });
+    const breakdown = within(tabs).getByRole('link', { name: 'Breakdown' });
+
+    breakdown.focus();
+    window.history.replaceState(null, '', '#dashboard/breakdown');
+    fireEvent(window, new Event('hashchange'));
+
+    expect(await screen.findByRole('region', { name: 'Genre affinity' })).toBeTruthy();
+    expect(within(tabs).getByRole('link', { name: 'Breakdown' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(document.activeElement).toBe(breakdown);
+    expect(document.activeElement).not.toBe(screen.getByRole('main'));
   });
 });

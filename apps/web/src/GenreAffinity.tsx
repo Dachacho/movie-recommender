@@ -43,13 +43,13 @@ function formatAffinity(affinity: number): string {
 export function GenreAffinity({ graph, loading }: GenreAffinityProps) {
   const sorted = useMemo(
     () =>
-      [...graph.genres].sort(
+      [...graph.allGenres].sort(
         (left, right) =>
           right.affinity - left.affinity ||
           right.count - left.count ||
           compareNames(left.genre, right.genre),
       ),
-    [graph.genres],
+    [graph.allGenres],
   );
 
   return (

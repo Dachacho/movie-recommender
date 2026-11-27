@@ -16,8 +16,12 @@ import {
 import { buildTasteGraph } from './tasteGraph';
 import { TasteConstellation } from './TasteConstellation';
 
+export type DashboardTab = 'taste' | 'breakdown' | 'activity' | 'data';
+
 export interface DashboardProps {
   profile: GuestProfile;
+  /** Hash-selected panel; defaults to the overview. */
+  tab?: DashboardTab;
   /** Injected in tests; defaults to createMovieLookup(fetchMovie). */
   lookup?: MovieLookup;
   /** Injected in tests for deterministic dates. */
@@ -32,25 +36,7 @@ interface DashboardData {
   history: HistoryEntry[];
 }
 
-interface TitleBatch {
-  /** Ids the batch was requested for, joined; null before the first request. */
-  key: string | null;
-  settled: boolean;
-  movies: ReadonlyMap<number, MovieCard | null>;
-}
-
-interface RowFocusRequest {
-  panel: 'ratings' | 'watchlist';
-  index: number;
-}
-
-function TitlePlaceholder() {
-  return <span className="title-skeleton" aria-hidden="true" />;
-}
-
 const LOAD_ERROR_MESSAGE = 'Could not load your dashboard. Try again.';
-const REMOVE_RATING_ERROR_MESSAGE = 'Could not remove that rating. Try again.';
-const REMOVE_WATCHLIST_ERROR_MESSAGE = 'Could not change your watchlist. Try again.';
 const EXPORT_RATINGS_ERROR_MESSAGE = 'Could not export your ratings. Try again.';
 const EXPORT_BACKUP_ERROR_MESSAGE = 'Could not export your backup. Try again.';
 const DELETE_PROFILE_ERROR_MESSAGE = 'Could not delete your profile. Try again.';
@@ -66,14 +52,16 @@ const DATA_ACTION_ERROR_MESSAGES: Record<DataAction, string> = {
   delete: DELETE_PROFILE_ERROR_MESSAGE,
 };
 
+const DASHBOARD_TABS: readonly { tab: DashboardTab; label: string }[] = [
+  { tab: 'taste', label: 'Taste' },
+  { tab: 'breakdown', label: 'Breakdown' },
+  { tab: 'activity', label: 'Activity' },
+  { tab: 'data', label: 'Data' },
+];
+
 /** The ledger shows the newest rounds; stats still read everything retained. */
 const RECENT_HISTORY_LIMIT = 10;
 
-/** Dashboard panels preview a handful; the library owns the full profile. */
-const PREVIEW_COUNT = 5;
-
-const EMPTY_RATINGS_MESSAGE = 'No ratings yet. Rate a film in your library to tune the picks.';
-const EMPTY_WATCHLIST_MESSAGE = 'Nothing on your watchlist yet.';
 const EMPTY_HISTORY_MESSAGE = 'No picks yet.';
 
 const MONTH_NAMES = [
@@ -200,45 +188,29 @@ function replacedMovieLabel(entry: HistoryEntry, history: readonly HistoryEntry[
   return bestTitle === null ? 'Replaced one pick' : `Replaced ${bestTitle}`;
 }
 
-export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
+export function Dashboard({ profile, tab = 'taste', lookup, now = Date.now }: DashboardProps) {
   const [defaultLookup] = useState(() => createMovieLookup(fetchMovie));
   const movieLookup = lookup ?? defaultLookup;
   const [data, setData] = useState<DashboardData | null>(null);
-  const [titleBatch, setTitleBatch] = useState<TitleBatch>(() => ({
-    key: null,
-    settled: false,
-    movies: new Map(),
-  }));
   const [tasteCards, setTasteCards] = useState<ReadonlyMap<number, MovieCard | null>>(
     () => new Map(),
   );
   const [tasteSettled, setTasteSettled] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [removeRatingError, setRemoveRatingError] = useState<string | null>(null);
-  const [watchlistError, setWatchlistError] = useState<string | null>(null);
   const [dataAction, setDataAction] = useState<DataAction | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [rowFocus, setRowFocus] = useState<RowFocusRequest | null>(null);
   const dataActionInFlight = useRef(false);
   const loadId = useRef(0);
   const tasteRequestKey = useRef<string | null>(null);
   const tasteLoadId = useRef(0);
-  const ratingsListRef = useRef<HTMLUListElement | null>(null);
-  const watchlistListRef = useRef<HTMLUListElement | null>(null);
-  const ratingsHeadingRef = useRef<HTMLHeadingElement | null>(null);
-  const watchlistHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const deleteButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreDeleteFocus = useRef(false);
 
   const loadDashboard = useCallback(async (): Promise<void> => {
     loadId.current += 1;
     const currentLoadId = loadId.current;
-
-    // Preview rows shimmer until the new title batch settles; a rejected batch
-    // settles without titles so rows fall back to "Movie #<id>".
-    setTitleBatch((previous) => ({ ...previous, settled: false }));
 
     try {
       const [ratings, watchedIds, watchlistIds, cooldownIds, history] = await Promise.all([
@@ -261,37 +233,12 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
         history,
       });
       setLoadFailed(false);
-
-      const ids = [
-        ...ratedFilmsByRecency(ratings)
-          .slice(0, PREVIEW_COUNT)
-          .map((record) => record.movieId),
-        ...watchlistIds.slice(0, PREVIEW_COUNT),
-      ];
-      const key = ids.join(',');
-
-      setTitleBatch((previous) =>
-        previous.key === key ? previous : { key, settled: false, movies: new Map() },
-      );
-
-      try {
-        const resolved = await movieLookup.resolveMany(ids);
-
-        if (loadId.current === currentLoadId) {
-          setTitleBatch({ key, settled: true, movies: resolved });
-        }
-      } catch {
-        if (loadId.current === currentLoadId) {
-          setTitleBatch({ key, settled: true, movies: new Map() });
-        }
-      }
     } catch {
       if (loadId.current === currentLoadId) {
         setLoadFailed(true);
-        setTitleBatch((previous) => ({ ...previous, settled: true, movies: new Map() }));
       }
     }
-  }, [profile, movieLookup]);
+  }, [profile]);
 
   useEffect(() => {
     void loadDashboard();
@@ -301,8 +248,8 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     };
   }, [loadDashboard]);
 
-  // The taste graph needs every rated film's genres. Resolve them in a second
-  // pass so a slow lookup cannot hold up the preview rows above.
+  // The taste graph needs every rated film's genres. Resolve them after the
+  // counts so a slow lookup cannot hold up the rest of the dashboard.
   useEffect(() => {
     if (data === null) {
       return;
@@ -378,29 +325,6 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     void resolveTasteCards();
   }, [data, movieLookup]);
 
-  // The removed row's button is unmounted with it. Once the reload has
-  // rendered, focus the row that took its place, else the previous row, else
-  // the heading that labels the now-empty panel.
-  useEffect(() => {
-    if (rowFocus === null) {
-      return;
-    }
-
-    const isRatings = rowFocus.panel === 'ratings';
-    const rows =
-      (isRatings ? ratingsListRef.current : watchlistListRef.current)?.querySelectorAll('li') ?? [];
-    const row = rows[rowFocus.index] ?? rows[rowFocus.index - 1];
-    const control = row?.querySelector('button');
-
-    if (control instanceof HTMLButtonElement) {
-      control.focus();
-    } else {
-      (isRatings ? ratingsHeadingRef.current : watchlistHeadingRef.current)?.focus();
-    }
-
-    setRowFocus(null);
-  }, [rowFocus]);
-
   // Cancelling removes the focused Cancel button; restore focus to the trigger
   // that reappears in its place.
   useEffect(() => {
@@ -411,34 +335,6 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     restoreDeleteFocus.current = false;
     deleteButtonRef.current?.focus();
   }, [confirmingDelete]);
-
-  async function removeRating(movieId: number, rowIndex: number): Promise<void> {
-    setRemoveRatingError(null);
-
-    try {
-      await profile.removeRating(movieId);
-    } catch {
-      setRemoveRatingError(REMOVE_RATING_ERROR_MESSAGE);
-      return;
-    }
-
-    await loadDashboard();
-    setRowFocus({ panel: 'ratings', index: rowIndex });
-  }
-
-  async function removeFromWatchlist(movieId: number, rowIndex: number): Promise<void> {
-    setWatchlistError(null);
-
-    try {
-      await profile.removeFromWatchlist(movieId);
-    } catch {
-      setWatchlistError(REMOVE_WATCHLIST_ERROR_MESSAGE);
-      return;
-    }
-
-    await loadDashboard();
-    setRowFocus({ panel: 'watchlist', index: rowIndex });
-  }
 
   /**
    * One guard for every "Your data" action: a second click while storage is
@@ -513,28 +409,6 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   }
 
   const ratedFilms = data === null ? [] : ratedFilmsByRecency(data.ratings);
-  const previewRatedFilms = ratedFilms.slice(0, PREVIEW_COUNT);
-  const previewWatchlistIds = data === null ? [] : data.watchlistIds.slice(0, PREVIEW_COUNT);
-  const previewIds = [...previewRatedFilms.map((record) => record.movieId), ...previewWatchlistIds];
-  const titlesSettled = titleBatch.key === previewIds.join(',') && titleBatch.settled;
-
-  /** Null while the preview batch is still resolving; a known miss falls back. */
-  function titleFor(movieId: number): string | null {
-    if (!titlesSettled) {
-      return null;
-    }
-
-    return titleBatch.movies.get(movieId)?.title ?? `Movie #${String(movieId)}`;
-  }
-
-  function yearFor(movieId: number): number | null {
-    if (!titlesSettled) {
-      return null;
-    }
-
-    return titleBatch.movies.get(movieId)?.releaseYear ?? null;
-  }
-
   const histogram = ratingHistogram(ratedFilms);
   const maxCount = histogram.reduce((max, bucket) => Math.max(max, bucket.count), 0);
   const mean = data === null ? null : meanRating(ratedFilms);
@@ -560,6 +434,18 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
       </h2>
       <p className="dashboard__lede">The record of what you've rated, saved and asked for.</p>
 
+      <nav className="dashboard__tabs" aria-label="Dashboard sections">
+        {DASHBOARD_TABS.map((item) => (
+          <a
+            key={item.tab}
+            href={`#dashboard/${item.tab}`}
+            aria-current={tab === item.tab ? 'page' : undefined}
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
+
       {loadFailed && <p className="status status--error">{LOAD_ERROR_MESSAGE}</p>}
 
       {data === null && !loadFailed && (
@@ -570,315 +456,218 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
 
       {data !== null && (
         <>
-          <div className="dashboard__overview">
-            <ul className="dashboard__counts">
-              <li className="dashboard__count">
-                <span className="dashboard__count-value">{String(ratedFilms.length)}</span> rated
-              </li>
-              <li className="dashboard__count">
-                <span className="dashboard__count-value">{String(data.watchedCount)}</span> watched
-              </li>
-              <li className="dashboard__count">
-                <span className="dashboard__count-value">{String(data.watchlistIds.length)}</span>{' '}
-                watchlisted
-              </li>
-              <li className="dashboard__count">
-                <span className="dashboard__count-value">{String(data.cooldownCount)}</span> cooling
-                down
-              </li>
-            </ul>
-
-            <p className="dashboard__summary">
-              {mean === null ? (
-                'No ratings yet'
-              ) : (
-                <>
-                  Mean rating <span className="dashboard__mean">{mean.toFixed(1)}</span>
-                </>
-              )}
-              {', '}
-              {activityLabel(activity.rounds, activity.replacements)}
-            </p>
-          </div>
-
-          {ratedFilms.length > 0 && (
-            <section className="dashboard__panel" aria-labelledby="dashboard-histogram-heading">
-              <h3 className="dashboard__section-heading" id="dashboard-histogram-heading">
-                Rating spread
-              </h3>
-              <ul className="dashboard__histogram">
-                {histogram.map((bucket) => (
-                  <li className="dashboard__histogram-row" key={bucket.rating}>
-                    <span className="dashboard__histogram-label">
-                      {`${ratingLabel(bucket.rating)}: `}
-                    </span>
-                    <span className="dashboard__histogram-track" aria-hidden="true">
-                      <span
-                        className="dashboard__histogram-bar"
-                        style={{ width: histogramBarWidth(bucket.count, maxCount) }}
-                      />
-                    </span>
-                    <span
-                      className={`dashboard__histogram-count${
-                        bucket.count === 0 ? ' dashboard__histogram-count--zero' : ''
-                      }`}
-                    >
-                      {countLabel(bucket.count)}
-                    </span>
+          {tab === 'taste' && (
+            <>
+              <div className="dashboard__overview">
+                <ul className="dashboard__counts">
+                  <li className="dashboard__count">
+                    <span className="dashboard__count-value">{String(ratedFilms.length)}</span>{' '}
+                    rated
                   </li>
-                ))}
-              </ul>
+                  <li className="dashboard__count">
+                    <span className="dashboard__count-value">{String(data.watchedCount)}</span>{' '}
+                    watched
+                  </li>
+                  <li className="dashboard__count">
+                    <span className="dashboard__count-value">
+                      {String(data.watchlistIds.length)}
+                    </span>{' '}
+                    watchlisted
+                  </li>
+                  <li className="dashboard__count">
+                    <span className="dashboard__count-value">{String(data.cooldownCount)}</span>{' '}
+                    cooling down
+                  </li>
+                </ul>
+
+                <div className="dashboard__overview-foot">
+                  <p className="dashboard__summary">
+                    {mean === null ? (
+                      'No ratings yet'
+                    ) : (
+                      <>
+                        Mean rating <span className="dashboard__mean">{mean.toFixed(1)}</span>
+                      </>
+                    )}
+                    {', '}
+                    {activityLabel(activity.rounds, activity.replacements)}
+                  </p>
+                  <a className="dashboard__library-link" href="#library/rated">
+                    Open your library
+                  </a>
+                </div>
+              </div>
+
+              <TasteConstellation
+                graph={tasteGraph}
+                loading={!tasteSettled}
+                ratedCount={data.ratings.length}
+              />
+            </>
+          )}
+
+          {tab === 'breakdown' && (
+            <>
+              {ratedFilms.length > 0 && (
+                <section className="dashboard__panel" aria-labelledby="dashboard-histogram-heading">
+                  <h3 className="dashboard__section-heading" id="dashboard-histogram-heading">
+                    Rating spread
+                  </h3>
+                  <ul className="dashboard__histogram">
+                    {histogram.map((bucket) => (
+                      <li className="dashboard__histogram-row" key={bucket.rating}>
+                        <span className="dashboard__histogram-label">
+                          {`${ratingLabel(bucket.rating)}: `}
+                        </span>
+                        <span className="dashboard__histogram-track" aria-hidden="true">
+                          <span
+                            className="dashboard__histogram-bar"
+                            style={{ width: histogramBarWidth(bucket.count, maxCount) }}
+                          />
+                        </span>
+                        <span
+                          className={`dashboard__histogram-count${
+                            bucket.count === 0 ? ' dashboard__histogram-count--zero' : ''
+                          }`}
+                        >
+                          {countLabel(bucket.count)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              <GenreAffinity graph={tasteGraph} loading={!tasteSettled} />
+            </>
+          )}
+
+          {tab === 'activity' && (
+            <section className="dashboard__panel" aria-labelledby="dashboard-history-heading">
+              <h3 className="dashboard__section-heading" id="dashboard-history-heading">
+                Recent picks
+              </h3>
+
+              {recentHistory.length === 0 ? (
+                <p className="dashboard__empty">
+                  {EMPTY_HISTORY_MESSAGE} <a href="#picks">Start a round</a>
+                </p>
+              ) : (
+                <ol className="dashboard__history">
+                  {recentHistory.map((entry) => {
+                    const replaced = replacedMovieLabel(entry, data.history);
+
+                    return (
+                      <li className="dashboard__history-entry" key={entry.id}>
+                        <div className="dashboard__history-meta">
+                          <span>{formatTimestamp(entry.createdAt)}</span>
+                          <span>{SOURCE_LABELS[entry.source]}</span>
+                          <span className="dashboard__history-kind">{KIND_LABELS[entry.kind]}</span>
+                        </div>
+                        {entry.prompt !== '' && (
+                          <p className="dashboard__history-prompt">{`"${entry.prompt}"`}</p>
+                        )}
+                        {replaced !== null && (
+                          <p className="dashboard__history-replaced">{replaced}</p>
+                        )}
+                        <p className="dashboard__history-picks">
+                          {entry.movies.map((movie) => movie.title).join(' · ')}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
             </section>
           )}
 
-          <TasteConstellation
-            graph={tasteGraph}
-            loading={!tasteSettled}
-            ratedCount={data.ratings.length}
-          />
-          <GenreAffinity graph={tasteGraph} loading={!tasteSettled} />
-
-          <div className="dashboard__columns">
-            <section className="dashboard__panel" aria-labelledby="dashboard-ratings-heading">
-              <h3
-                className="dashboard__section-heading"
-                id="dashboard-ratings-heading"
-                ref={ratingsHeadingRef}
-                tabIndex={-1}
-              >
-                Recently rated films
+          {tab === 'data' && (
+            <section className="dashboard__panel" aria-labelledby="dashboard-data-heading">
+              <h3 className="dashboard__section-heading" id="dashboard-data-heading">
+                Your data
               </h3>
 
-              {removeRatingError !== null && (
-                <p className="status status--error">{removeRatingError}</p>
-              )}
-
-              {ratedFilms.length === 0 ? (
-                <p className="dashboard__empty">
-                  {EMPTY_RATINGS_MESSAGE} <a href="#library/find">Find films to rate</a>
-                </p>
-              ) : (
-                <>
-                  <ul className="dashboard__rows" aria-busy={!titlesSettled} ref={ratingsListRef}>
-                    {previewRatedFilms.map((record, index) => {
-                      const title = titleFor(record.movieId);
-                      const year = yearFor(record.movieId);
-
-                      return (
-                        <li className="dashboard__row" key={record.movieId}>
-                          <span className="dashboard__row-film">
-                            <span className="dashboard__row-title">
-                              {title === null ? <TitlePlaceholder /> : title}
-                            </span>
-                            {year !== null && <span className="dashboard__row-year">{year}</span>}
-                          </span>
-                          <span className="dashboard__row-rating">
-                            {`${formatRating(record.rating)} / 5`}
-                          </span>
-                          <button
-                            type="button"
-                            className="dashboard__remove button--ghost"
-                            aria-label={`Remove rating for ${title ?? 'this film'}`}
-                            onClick={() => {
-                              void removeRating(record.movieId, index);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-
-                  {ratedFilms.length > PREVIEW_COUNT && (
-                    <p className="dashboard__more">
-                      {`Showing ${String(PREVIEW_COUNT)} of ${String(ratedFilms.length)}. `}
-                      <a href="#library">View all rated films.</a>
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
-
-            <section className="dashboard__panel" aria-labelledby="dashboard-watchlist-heading">
-              <h3
-                className="dashboard__section-heading"
-                id="dashboard-watchlist-heading"
-                ref={watchlistHeadingRef}
-                tabIndex={-1}
-              >
-                Watchlist
-              </h3>
-
-              {watchlistError !== null && <p className="status status--error">{watchlistError}</p>}
-
-              {data.watchlistIds.length === 0 ? (
-                <p className="dashboard__empty">
-                  {EMPTY_WATCHLIST_MESSAGE} <a href="#library/find">Find films to save</a>
-                </p>
-              ) : (
-                <>
-                  <ul className="dashboard__rows" aria-busy={!titlesSettled} ref={watchlistListRef}>
-                    {previewWatchlistIds.map((movieId, index) => {
-                      const title = titleFor(movieId);
-                      const year = yearFor(movieId);
-
-                      return (
-                        <li className="dashboard__row" key={movieId}>
-                          <span className="dashboard__row-film">
-                            <span className="dashboard__row-title">
-                              {title === null ? <TitlePlaceholder /> : title}
-                            </span>
-                            {year !== null && <span className="dashboard__row-year">{year}</span>}
-                          </span>
-                          <button
-                            type="button"
-                            className="dashboard__remove button--ghost"
-                            aria-label={`Remove ${title ?? 'this film'} from watchlist`}
-                            onClick={() => {
-                              void removeFromWatchlist(movieId, index);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-
-                  {data.watchlistIds.length > PREVIEW_COUNT && (
-                    <p className="dashboard__more">
-                      {`Showing ${String(PREVIEW_COUNT)} of ${String(data.watchlistIds.length)}. `}
-                      <a href="#library/watchlist">View all watchlist films.</a>
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
-          </div>
-
-          <section className="dashboard__panel" aria-labelledby="dashboard-history-heading">
-            <h3 className="dashboard__section-heading" id="dashboard-history-heading">
-              Recent picks
-            </h3>
-
-            {recentHistory.length === 0 ? (
-              <p className="dashboard__empty">
-                {EMPTY_HISTORY_MESSAGE} <a href="#picks">Start a round</a>
-              </p>
-            ) : (
-              <ol className="dashboard__history">
-                {recentHistory.map((entry) => {
-                  const replaced = replacedMovieLabel(entry, data.history);
-
-                  return (
-                    <li className="dashboard__history-entry" key={entry.id}>
-                      <div className="dashboard__history-meta">
-                        <span>{formatTimestamp(entry.createdAt)}</span>
-                        <span>{SOURCE_LABELS[entry.source]}</span>
-                        <span className="dashboard__history-kind">{KIND_LABELS[entry.kind]}</span>
-                      </div>
-                      {entry.prompt !== '' && (
-                        <p className="dashboard__history-prompt">{`"${entry.prompt}"`}</p>
-                      )}
-                      {replaced !== null && (
-                        <p className="dashboard__history-replaced">{replaced}</p>
-                      )}
-                      <p className="dashboard__history-picks">
-                        {entry.movies.map((movie) => movie.title).join(' · ')}
-                      </p>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </section>
-
-          <section className="dashboard__panel" aria-labelledby="dashboard-data-heading">
-            <h3 className="dashboard__section-heading" id="dashboard-data-heading">
-              Your data
-            </h3>
-
-            <div className="dashboard__data-actions">
-              <button
-                type="button"
-                className="button--secondary"
-                disabled={dataAction !== null || ratedFilms.length === 0}
-                onClick={() => {
-                  void exportRatings();
-                }}
-              >
-                Export ratings (CSV)
-              </button>
-              <button
-                type="button"
-                className="button--secondary"
-                disabled={dataAction !== null}
-                onClick={() => {
-                  void exportBackup();
-                }}
-              >
-                Export backup (JSON)
-              </button>
-              {!confirmingDelete && (
+              <div className="dashboard__data-actions">
                 <button
                   type="button"
-                  className="button--ghost-danger"
-                  disabled={dataAction !== null}
-                  ref={deleteButtonRef}
+                  className="button--secondary"
+                  disabled={dataAction !== null || ratedFilms.length === 0}
                   onClick={() => {
-                    setConfirmingDelete(true);
+                    void exportRatings();
                   }}
                 >
-                  Delete profile
+                  Export ratings (CSV)
                 </button>
-              )}
-            </div>
-
-            {confirmingDelete && (
-              <div className="dashboard__data-confirm">
-                <p className="dashboard__data-warning" id="dashboard-delete-warning">
-                  {DELETE_PROFILE_WARNING}
-                </p>
-                <div className="dashboard__data-actions">
+                <button
+                  type="button"
+                  className="button--secondary"
+                  disabled={dataAction !== null}
+                  onClick={() => {
+                    void exportBackup();
+                  }}
+                >
+                  Export backup (JSON)
+                </button>
+                {!confirmingDelete && (
                   <button
                     type="button"
-                    className="button--danger"
+                    className="button--ghost-danger"
                     disabled={dataAction !== null}
-                    autoFocus
-                    aria-describedby="dashboard-delete-warning"
+                    ref={deleteButtonRef}
                     onClick={() => {
-                      void deleteProfile();
+                      setConfirmingDelete(true);
                     }}
                   >
-                    Delete everything
+                    Delete profile
                   </button>
-                  <button
-                    type="button"
-                    className="button--ghost"
-                    disabled={dataAction !== null}
-                    onClick={() => {
-                      restoreDeleteFocus.current = true;
-                      setConfirmingDelete(false);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
+                )}
               </div>
-            )}
 
-            <p
-              className={
-                dataError === null
-                  ? 'status dashboard__data-status'
-                  : 'status status--error dashboard__data-status'
-              }
-              role="status"
-            >
-              {dataError ?? dataStatus ?? ''}
-            </p>
-          </section>
+              {confirmingDelete && (
+                <div className="dashboard__data-confirm">
+                  <p className="dashboard__data-warning" id="dashboard-delete-warning">
+                    {DELETE_PROFILE_WARNING}
+                  </p>
+                  <div className="dashboard__data-actions">
+                    <button
+                      type="button"
+                      className="button--danger"
+                      disabled={dataAction !== null}
+                      autoFocus
+                      aria-describedby="dashboard-delete-warning"
+                      onClick={() => {
+                        void deleteProfile();
+                      }}
+                    >
+                      Delete everything
+                    </button>
+                    <button
+                      type="button"
+                      className="button--ghost"
+                      disabled={dataAction !== null}
+                      onClick={() => {
+                        restoreDeleteFocus.current = true;
+                        setConfirmingDelete(false);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <p
+                className={
+                  dataError === null
+                    ? 'status dashboard__data-status'
+                    : 'status status--error dashboard__data-status'
+                }
+                role="status"
+              >
+                {dataError ?? dataStatus ?? ''}
+              </p>
+            </section>
+          )}
         </>
       )}
     </section>
