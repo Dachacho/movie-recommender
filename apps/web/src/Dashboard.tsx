@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MovieCard } from '@movie-recommender/shared';
 import { fetchMovie } from './api';
 import { formatRating, meanRating, ratingHistogram, recentActivity } from './dashboardStats';
 import { downloadTextFile } from './download';
+import { GenreAffinity } from './GenreAffinity';
 import { createMovieLookup, type MovieLookup } from './movieLookup';
 import type { GuestProfile } from './profile/GuestProfile';
 import { MAX_HISTORY_ROUNDS, type HistoryEntry, type RatingRecord } from './profile/schema';
@@ -12,6 +13,8 @@ import {
   isoDate,
   ratingRowsForExport,
 } from './profileExport';
+import { buildTasteGraph } from './tasteGraph';
+import { TasteConstellation } from './TasteConstellation';
 
 export interface DashboardProps {
   profile: GuestProfile;
@@ -206,6 +209,10 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
     settled: false,
     movies: new Map(),
   }));
+  const [tasteCards, setTasteCards] = useState<ReadonlyMap<number, MovieCard | null>>(
+    () => new Map(),
+  );
+  const [tasteSettled, setTasteSettled] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [removeRatingError, setRemoveRatingError] = useState<string | null>(null);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
@@ -216,6 +223,8 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   const [rowFocus, setRowFocus] = useState<RowFocusRequest | null>(null);
   const dataActionInFlight = useRef(false);
   const loadId = useRef(0);
+  const tasteRequestKey = useRef<string | null>(null);
+  const tasteLoadId = useRef(0);
   const ratingsListRef = useRef<HTMLUListElement | null>(null);
   const watchlistListRef = useRef<HTMLUListElement | null>(null);
   const ratingsHeadingRef = useRef<HTMLHeadingElement | null>(null);
@@ -291,6 +300,83 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
       loadId.current += 1;
     };
   }, [loadDashboard]);
+
+  // The taste graph needs every rated film's genres. Resolve them in a second
+  // pass so a slow lookup cannot hold up the preview rows above.
+  useEffect(() => {
+    if (data === null) {
+      return;
+    }
+
+    const ids = [...new Set(data.ratings.map((record) => record.movieId))].sort(
+      (left, right) => left - right,
+    );
+    const key = ids.join(',');
+
+    if (tasteRequestKey.current === key) {
+      return;
+    }
+
+    tasteRequestKey.current = key;
+    tasteLoadId.current += 1;
+    const currentTasteLoadId = tasteLoadId.current;
+
+    if (ids.length === 0) {
+      setTasteCards(new Map());
+      setTasteSettled(true);
+      return;
+    }
+
+    setTasteSettled(false);
+
+    async function resolveTasteCards(): Promise<void> {
+      try {
+        const first = await movieLookup.resolveMany(ids);
+
+        if (tasteLoadId.current !== currentTasteLoadId) {
+          return;
+        }
+
+        const missing = ids.filter((movieId) => first.get(movieId) == null);
+        let cards = first;
+        const invalidate = movieLookup.invalidate;
+
+        if (missing.length > 0 && invalidate !== undefined) {
+          invalidate(missing);
+          const retried = await movieLookup.resolveMany(missing);
+
+          if (tasteLoadId.current !== currentTasteLoadId) {
+            return;
+          }
+
+          cards = new Map(first);
+
+          for (const movieId of missing) {
+            const card = retried.get(movieId);
+
+            if (card !== undefined) {
+              cards.set(movieId, card);
+            }
+          }
+        }
+
+        if (tasteLoadId.current === currentTasteLoadId) {
+          setTasteCards(cards);
+          setTasteSettled(true);
+        }
+      } catch {
+        if (tasteLoadId.current === currentTasteLoadId) {
+          // The bundled lookup resolves misses to null, so a rejection here is unexpected.
+          // A later dashboard load gets a fresh chance at the same ids.
+          tasteRequestKey.current = null;
+          setTasteCards(new Map());
+          setTasteSettled(true);
+        }
+      }
+    }
+
+    void resolveTasteCards();
+  }, [data, movieLookup]);
 
   // The removed row's button is unmounted with it. Once the reload has
   // rendered, focus the row that took its place, else the previous row, else
@@ -455,6 +541,17 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
   const activity =
     data === null ? { rounds: 0, replacements: 0 } : recentActivity(data.history, now());
   const recentHistory = data === null ? [] : data.history.slice(0, RECENT_HISTORY_LIMIT);
+  const tasteGraph = useMemo(
+    () =>
+      buildTasteGraph(
+        (data === null ? [] : ratedFilmsByRecency(data.ratings)).map((record) => ({
+          movieId: record.movieId,
+          rating: record.rating,
+          genres: tasteCards.get(record.movieId)?.genres ?? [],
+        })),
+      ),
+    [data, tasteCards],
+  );
 
   return (
     <section className="dashboard" aria-labelledby="dashboard-heading">
@@ -533,6 +630,13 @@ export function Dashboard({ profile, lookup, now = Date.now }: DashboardProps) {
               </ul>
             </section>
           )}
+
+          <TasteConstellation
+            graph={tasteGraph}
+            loading={!tasteSettled}
+            ratedCount={data.ratings.length}
+          />
+          <GenreAffinity graph={tasteGraph} loading={!tasteSettled} />
 
           <div className="dashboard__columns">
             <section className="dashboard__panel" aria-labelledby="dashboard-ratings-heading">

@@ -362,7 +362,7 @@ describe('Dashboard', () => {
     ).toBeTruthy();
   });
 
-  it('previews five rows per panel and resolves only the visible ids', async () => {
+  it('previews five rows per panel and keeps the title batch to visible ids', async () => {
     const { profile, storage } = createProfile();
 
     storage.seedRatings(
@@ -407,11 +407,260 @@ describe('Dashboard', () => {
         .getAttribute('href'),
     ).toBe('#library/watchlist');
 
-    await waitFor(() => expect(resolvedIds).toHaveLength(1));
-    expect(resolvedIds[0]).toEqual([1, 2, 3, 4, 5, 101, 102, 103, 104, 105]);
-    expect(resolvedIds[0]).not.toContain(6);
-    expect(resolvedIds[0]).not.toContain(7);
-    expect(resolvedIds[0]).not.toContain(106);
+    const previewIds = [1, 2, 3, 4, 5, 101, 102, 103, 104, 105];
+    const tasteIds = [1, 2, 3, 4, 5, 6, 7];
+
+    await waitFor(() => {
+      expect(resolvedIds).toContainEqual(previewIds);
+      expect(resolvedIds).toContainEqual(tasteIds);
+    });
+
+    const previewCall = resolvedIds.find((ids) => ids.join(',') === previewIds.join(','));
+
+    expect(previewCall).toEqual(previewIds);
+    expect(previewCall).not.toContain(6);
+    expect(previewCall).not.toContain(7);
+    expect(previewCall).not.toContain(106);
+  });
+
+  it('maps every rated film into the constellation, table and genre bars', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 5, updatedAt: NOW - 1000 },
+      { movieId: MOONLIGHT.id, rating: 4, updatedAt: NOW - 2000 },
+      { movieId: HEAT.id, rating: 3, updatedAt: NOW - 3000 },
+      { movieId: PADDINGTON_2.id, rating: 2, updatedAt: NOW - 4000 },
+      { movieId: 5, rating: 4, updatedAt: NOW - 5000 },
+      { movieId: 6, rating: 4, updatedAt: NOW - 6000 },
+    ]);
+
+    const baseLookup = fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2]);
+    const resolvedIds: number[][] = [];
+    const lookup: MovieLookup = {
+      resolveMany: async (ids) => {
+        resolvedIds.push([...ids]);
+
+        return baseLookup.resolveMany(ids);
+      },
+    };
+
+    renderDashboard(profile, lookup);
+
+    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
+
+    expect(within(rated).getAllByRole('listitem')).toHaveLength(5);
+    expect(within(rated).getByText('Arrival')).toBeTruthy();
+    expect(within(rated).getByText('Movie #5')).toBeTruthy();
+
+    const taste = await screen.findByRole('region', { name: 'Taste constellation' });
+
+    expect(await within(taste).findByText('4 of 6 rated films · mean 3.5')).toBeTruthy();
+    expect(within(taste).getByText('Liked')).toBeTruthy();
+    expect(within(taste).getByText('Neutral')).toBeTruthy();
+    expect(within(taste).getByText('Disliked')).toBeTruthy();
+    expect(taste.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+
+    fireEvent.click(within(taste).getByText('Read as a table'));
+
+    const table = within(taste).getByRole('table', { name: /Genres from your rated films/ });
+    const rows = within(table).getAllByRole('row');
+    const dramaRow = within(table).getByRole('rowheader', { name: 'Drama' }).closest('tr');
+
+    expect(rows).toHaveLength(6);
+    expect(dramaRow?.textContent).toContain('3');
+    expect(dramaRow?.textContent).toContain('4.0');
+    expect(dramaRow?.textContent).toContain('+1.5');
+
+    const edgesTable = within(taste).getByRole('table', { name: 'Co-occurring genres' });
+    const edgeRow = within(edgesTable)
+      .getByRole('rowheader', { name: 'Crime + Drama' })
+      .closest('tr');
+
+    expect(within(edgesTable).getByRole('columnheader', { name: 'Genres' })).toBeTruthy();
+    expect(within(edgesTable).getByRole('columnheader', { name: 'Films' })).toBeTruthy();
+    expect(edgeRow?.textContent).toContain('1');
+
+    const bars = screen.getByRole('region', { name: 'Genre affinity' });
+    const barRows = within(bars).getAllByRole('listitem');
+
+    expect(barRows.map((row) => row.querySelector('.genre-affinity__genre')?.textContent)).toEqual([
+      'Science Fiction',
+      'Drama',
+      'Crime',
+      'Comedy',
+      'Family',
+    ]);
+    expect(barRows[0]?.textContent).toContain('1 film · 5.0 avg');
+    expect(barRows[0]?.querySelector('.genre-affinity__bar--positive')).toBeTruthy();
+    expect(barRows[4]?.querySelector('.genre-affinity__bar--negative')).toBeTruthy();
+
+    await waitFor(() => expect(resolvedIds).toContainEqual([1, 2, 3, 4, 5, 6]));
+  });
+
+  it('scales genre bars against ±2.5 and prints the signed affinity', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 4, updatedAt: NOW - 1000 },
+      { movieId: MOONLIGHT.id, rating: 3, updatedAt: NOW - 2000 },
+      { movieId: HEAT.id, rating: 2, updatedAt: NOW - 3000 },
+      { movieId: PADDINGTON_2.id, rating: 2.5, updatedAt: NOW - 4000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT, HEAT, PADDINGTON_2]));
+
+    const bars = await screen.findByRole('region', { name: 'Genre affinity' });
+    const scienceFiction = await within(bars).findByText('Science Fiction');
+    const scienceFictionRow = scienceFiction.closest('li');
+    const crime = within(bars).getByText('Crime').closest('li');
+    const family = within(bars).getByText('Family').closest('li');
+
+    expect(within(bars).getByText('−2.5 · neutral · +2.5')).toBeTruthy();
+    expect(
+      scienceFictionRow?.querySelector<HTMLElement>('.genre-affinity__affinity')?.textContent,
+    ).toBe('+1.5');
+    expect(scienceFictionRow?.querySelector<HTMLElement>('.genre-affinity__bar')?.style.width).toBe(
+      '60%',
+    );
+    expect(crime?.querySelector<HTMLElement>('.genre-affinity__affinity')?.textContent).toBe(
+      '−0.5',
+    );
+    expect(crime?.querySelector<HTMLElement>('.genre-affinity__bar')?.style.width).toBe('20%');
+    expect(family?.querySelector<HTMLElement>('.genre-affinity__affinity')?.textContent).toBe(
+      '0.0',
+    );
+    expect(family?.querySelector<HTMLElement>('.genre-affinity__bar')?.style.width).toBe('0%');
+  });
+
+  it('reports the kept genre cap in the constellation stat', async () => {
+    const { profile, storage } = createProfile();
+    const sprawl: MovieCard = {
+      ...ARRIVAL,
+      id: 9,
+      title: 'Genre Sprawl',
+      genres: Array.from({ length: 14 }, (_value, index) => `Genre ${String(index + 1)}`),
+    };
+
+    storage.seedRatings([{ movieId: sprawl.id, rating: 4, updatedAt: NOW }]);
+
+    renderDashboard(profile, fakeLookup([sprawl]));
+
+    expect(await screen.findByText('1 film · mean 4.0 · top 12 of 14 genres')).toBeTruthy();
+  });
+
+  it('invalidates missing taste ids once and merges the retry', async () => {
+    const { profile, storage } = createProfile();
+    const recovered: MovieCard = {
+      ...MOONLIGHT,
+      id: 99,
+      title: 'Recovered Film',
+      genres: ['Drama'],
+    };
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 4, updatedAt: NOW - 1000 },
+      { movieId: recovered.id, rating: 3, updatedAt: NOW - 2000 },
+    ]);
+
+    let recoveredAvailable = false;
+    const invalidate = vi.fn();
+    const lookup: MovieLookup = {
+      resolveMany: async (ids) => {
+        const byId = new Map<number, MovieCard | null>([
+          [ARRIVAL.id, ARRIVAL],
+          [recovered.id, recoveredAvailable ? recovered : null],
+        ]);
+
+        return new Map(ids.map((movieId) => [movieId, byId.get(movieId) ?? null]));
+      },
+      invalidate: (ids) => {
+        invalidate([...ids]);
+        recoveredAvailable = true;
+      },
+    };
+
+    renderDashboard(profile, lookup);
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith([recovered.id]));
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('2 films · mean 3.5')).toBeTruthy();
+    expect(screen.queryByText('1 of 2 rated films · mean 3.5')).toBeNull();
+  });
+
+  it('keeps preview rows visible while the all-ratings lookup is still pending', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 5, updatedAt: NOW - 1000 },
+      { movieId: MOONLIGHT.id, rating: 4, updatedAt: NOW - 2000 },
+      { movieId: HEAT.id, rating: 3, updatedAt: NOW - 3000 },
+      { movieId: 6, rating: 4, updatedAt: NOW - 4000 },
+      { movieId: 7, rating: 4, updatedAt: NOW - 5000 },
+      { movieId: 8, rating: 4, updatedAt: NOW - 6000 },
+    ]);
+
+    const baseLookup = fakeLookup([ARRIVAL, MOONLIGHT, HEAT]);
+    const lookup: MovieLookup = {
+      resolveMany: (ids) =>
+        ids.includes(8)
+          ? new Promise(() => {
+              // The taste pass stays pending; the preview batch must not wait for it.
+            })
+          : baseLookup.resolveMany(ids),
+    };
+
+    renderDashboard(profile, lookup);
+
+    const rated = await screen.findByRole('region', { name: 'Recently rated films' });
+
+    expect(within(rated).getByText('Arrival')).toBeTruthy();
+    expect(within(rated).getByText('Heat')).toBeTruthy();
+    expect(within(rated).getByText('Movie #6')).toBeTruthy();
+
+    const taste = screen.getByRole('region', { name: 'Taste constellation' });
+
+    expect(within(taste).getByRole('status').textContent).toBe('Placing your genres…');
+    expect(screen.getByRole('region', { name: 'Genre affinity' }).textContent).toContain(
+      'Reading your genres…',
+    );
+  });
+
+  it('shows a composed taste empty state with a library link', async () => {
+    const { profile } = createProfile();
+
+    renderDashboard(profile, fakeLookup([]));
+
+    const taste = await screen.findByRole('region', { name: 'Taste constellation' });
+    const link = await within(taste).findByRole('link', { name: 'Find films to rate' });
+
+    expect(link.getAttribute('href')).toBe('#library/find');
+    expect(within(taste).getByText('Your constellation has no genres yet.')).toBeTruthy();
+    expect(
+      within(screen.getByRole('region', { name: 'Genre affinity' })).getByText(
+        'Rate a few films and their genres will line up here.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('asks for another rating before drawing a sparse constellation', async () => {
+    const { profile, storage } = createProfile();
+
+    storage.seedRatings([
+      { movieId: ARRIVAL.id, rating: 5, updatedAt: NOW - 1000 },
+      { movieId: MOONLIGHT.id, rating: 4, updatedAt: NOW - 2000 },
+    ]);
+
+    renderDashboard(profile, fakeLookup([ARRIVAL, MOONLIGHT]));
+
+    const taste = await screen.findByRole('region', { name: 'Taste constellation' });
+
+    expect(await within(taste).findByText('The constellation needs another point.')).toBeTruthy();
+    expect(
+      within(taste).getByText('Rate 1 more film to give the constellation enough points to draw.'),
+    ).toBeTruthy();
+    expect(within(taste).queryByText('Read as a table')).toBeNull();
+    expect(taste.querySelector('svg')).toBeNull();
   });
 
   it('keeps the fallback title when the lookup resolves nothing', async () => {
@@ -449,12 +698,10 @@ describe('Dashboard', () => {
       { movieId: 2, rating: 4, updatedAt: NOW - 2000 },
     ]);
 
-    let calls = 0;
+    let rejectLookups = false;
     const lookup: MovieLookup = {
       resolveMany: async (ids) => {
-        calls += 1;
-
-        if (calls > 1) {
+        if (rejectLookups) {
           throw new Error('lookup unavailable');
         }
 
@@ -469,9 +716,12 @@ describe('Dashboard', () => {
 
     renderDashboard(profile, lookup);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove rating for Moonlight' }));
+    const removeMoonlight = await screen.findByRole('button', {
+      name: 'Remove rating for Moonlight',
+    });
 
-    await waitFor(() => expect(calls).toBe(2));
+    rejectLookups = true;
+    fireEvent.click(removeMoonlight);
 
     expect(await screen.findByRole('button', { name: 'Remove rating for Movie #1' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Remove rating for Movie #2' })).toBeNull();

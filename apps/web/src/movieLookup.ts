@@ -1,8 +1,10 @@
 import type { MovieCard } from '@movie-recommender/shared';
 
 export interface MovieLookup {
-  /** Resolves each id at most once; failures resolve to null. */
+  /** Resolves each id at most once per cache entry; failures resolve to null. */
   resolveMany(ids: readonly number[]): Promise<Map<number, MovieCard | null>>;
+  /** Drops cached ids so the next resolveMany refetches them. In-flight requests are untouched. */
+  invalidate?(ids: readonly number[]): void;
 }
 
 const DEFAULT_CONCURRENCY = 4;
@@ -91,5 +93,11 @@ export function createMovieLookup(
     return results;
   }
 
-  return { resolveMany };
+  function invalidate(ids: readonly number[]): void {
+    for (const movieId of new Set(ids)) {
+      cache.delete(movieId);
+    }
+  }
+
+  return { resolveMany, invalidate };
 }

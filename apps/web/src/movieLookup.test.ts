@@ -74,6 +74,42 @@ describe('createMovieLookup', () => {
     expect(second.get(9)).toBeNull();
   });
 
+  it('refetches an invalidated cached null without refetching untouched ids', async () => {
+    let missing = true;
+    const fetcher = vi.fn(async (movieId: number) =>
+      movieId === 9 && missing ? null : movieCard(movieId),
+    );
+    const lookup = createMovieLookup(fetcher);
+
+    await lookup.resolveMany([9, 10]);
+    missing = false;
+    lookup.invalidate?.([9]);
+
+    const second = await lookup.resolveMany([9, 10]);
+
+    expect(fetcher.mock.calls.map(([movieId]) => movieId)).toEqual([9, 10, 9]);
+    expect(second.get(9)).toEqual(movieCard(9));
+    expect(second.get(10)).toEqual(movieCard(10));
+  });
+
+  it('leaves an in-flight request untouched by invalidate', async () => {
+    const gate = deferred<MovieCard | null>();
+    const fetcher = vi.fn(() => gate.promise);
+    const lookup = createMovieLookup(fetcher);
+
+    const first = lookup.resolveMany([4]);
+    lookup.invalidate?.([4]);
+    const second = lookup.resolveMany([4]);
+
+    gate.resolve(movieCard(4));
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(firstResult.get(4)).toEqual(movieCard(4));
+    expect(secondResult.get(4)).toEqual(movieCard(4));
+  });
+
   it('shares an in-flight request between overlapping calls', async () => {
     const gate = deferred<MovieCard | null>();
     const fetcher = vi.fn(() => gate.promise);
